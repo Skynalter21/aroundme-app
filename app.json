@@ -1,28 +1,32 @@
 {
   "expo": {
-    "name": "aroundme-app",
+    "name": "AroundMe",
     "slug": "aroundme-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "aroundmeapp",
-    "userInterfaceStyle": "automatic",
+    "scheme": "aroundme",
+    "userInterfaceStyle": "dark",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0d1117",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.aroundmeapp"
+      "package": "com.aroundme.app"
     },
     "web": {
       "output": "static",
@@ -33,7 +37,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#0d1117",
           "android": {
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
@@ -43,7 +47,14 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Permitir que o AroundMe acesse sua localização."
+          "locationWhenInUsePermission": "Permitir que o AroundMe acesse sua localização para mostrar mensagens próximas a você."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O AroundMe precisa de acesso às suas fotos para enviar mídias no chat.",
+          "cameraPermission": "O AroundMe precisa de acesso à câmera para tirar fotos e gravar vídeos no chat."
         }
       ],
       "expo-video"

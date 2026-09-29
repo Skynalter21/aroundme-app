@@ -1,18 +1,28 @@
 import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
-import { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
-  ScrollView,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import MessageCard from "../components/MessageCard";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import ImageModal from "../components/ImageModal";
+import MediaPickerModal from "../components/MediaPickerModal";
+import MessageCard, { MessageData } from "../components/MessageCard";
+import ProfileModal from "../components/ProfileModal";
 import RadiusModal from "../components/RadiusModal";
-import SendMessageBox from "../components/SendMessageBox";
+import SendMessageBox, { SelectedMedia } from "../components/SendMessageBox";
+
 import api from "../services/api";
 import { getUserCurrentLocation } from "../services/locationService";
 import socket from "../services/socket";
@@ -21,25 +31,16 @@ import {
   removeStoredUser,
   saveStoredUser,
 } from "../storage/userStorage";
-type User = {
+
+interface User {
   id: string;
   nickname: string;
-};
+}
 
-type UserLocation = {
+interface UserLocation {
   latitude: number;
   longitude: number;
-};
-
-type Message = {
-  id: string;
-  userId?: string;
-  nickname: string;
-  district: string;
-  text: string;
-  distance: number;
-  createdAt: string;
-};
+}
 
 export default function Home() {
   const [nickname, setNickname] = useState("");
@@ -47,79 +48,113 @@ export default function Home() {
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [radius, setRadius] = useState(5);
   const [loadingLocation, setLoadingLocation] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(socket.connected);
+
   const [address, setAddress] = useState({
     city: "",
-    district: "",
+    district: "Buscando localização...",
     region: "",
   });
-  const scrollViewRef = useRef<ScrollView>(null);
-  const [radiusModalVisible, setRadiusModalVisible] = useState(false);
 
   const [messageText, setMessageText] = useState("");
+  const [messages, setMessages] = useState<MessageData[]>([]);
+  const [sending, setSending] = useState(false);
 
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Modais e mídias
+  const [radiusModalVisible, setRadiusModalVisible] = useState(false);
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
+  const [mediaPickerVisible, setMediaPickerVisible] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    visible: boolean;
+    url: string | null;
+    sender: string;
+  }>({
+    visible: false,
+    url: null,
+    sender: "",
+  });
 
+  const flatListRef = useRef<FlatList<MessageData>>(null);
+
+  // Carrega usuário salvo
   useEffect(() => {
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  }, [messages]);
-  useEffect(() => {
-    loadUser();
+    async function initUser() {
+      const saved = await getStoredUser();
+      if (saved) {
+        setUser(saved);
+      }
+    }
+    initUser();
   }, []);
 
+  // Busca localização ao ter usuário
   useEffect(() => {
     if (user) {
-      getCurrentLocation();
+      fetchLocation();
     }
   }, [user]);
 
+  // Carrega mensagens sempre que localização ou raio mudar
   useEffect(() => {
     if (location) {
       loadMessages();
     }
   }, [location, radius]);
 
+  // Gerencia eventos do WebSocket de forma limpa
   useEffect(() => {
-    if (!location) return;
-
-    const interval = setInterval(() => {
-      loadMessages();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [location, radius]);
-
-  useEffect(() => {
-    socket.on("connect", () => {
+    function onConnect() {
       console.log("Socket conectado");
-    });
+      setSocketConnected(true);
+    }
 
-    socket.on("new_message", () => {
-      console.log("Nova mensagem");
-      loadMessages();
-    });
+    function onDisconnect() {
+      console.log("Socket desconectado");
+      setSocketConnected(false);
+    }
 
-    socket.on("message_deleted", () => {
-      console.log("Mensagem apagada");
+    function onNewMessage() {
       loadMessages();
-    });
+    }
+
+    function onMessageDeleted() {
+      loadMessages();
+    }
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("new_message", onNewMessage);
+    socket.on("message_deleted", onMessageDeleted);
 
     return () => {
-      socket.off("connect");
-      socket.off("new_message");
-      socket.off("message_deleted");
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("new_message", onNewMessage);
+      socket.off("message_deleted", onMessageDeleted);
     };
-  }, []);
+  }, [location, radius]);
 
-  async function loadUser() {
-    const savedUser = await getStoredUser();
-
-    if (savedUser) {
-      setUser(savedUser);
+  // Busca localização do usuário com reverse geocoding
+  async function fetchLocation() {
+    try {
+      setLoadingLocation(true);
+      const data = await getUserCurrentLocation();
+      setLocation(data.location);
+      setAddress(data.address);
+    } catch (error: any) {
+      console.log("Erro de localização:", error);
+      Alert.alert(
+        "Localização necessária",
+        "Por favor, habilite a permissão de GPS para ver e enviar mensagens no raio.",
+      );
+    } finally {
+      setLoadingLocation(false);
     }
   }
 
+  // Busca mensagens no raio
   async function loadMessages() {
     if (!location) return;
 
@@ -134,113 +169,23 @@ export default function Home() {
 
       setMessages(response.data);
     } catch (error) {
-      console.log(error);
+      console.log("Erro ao carregar mensagens:", error);
     }
   }
 
-  async function getCurrentLocation() {
-    try {
-      setLoadingLocation(true);
-
-      const data = await getUserCurrentLocation();
-
-      setLocation(data.location);
-      setAddress(data.address);
-    } catch (error: any) {
-      console.log("ERRO LOCALIZAÇÃO:", error);
-      console.log("MENSAGEM:", error?.message);
-
-      Alert.alert("Erro localização", error?.message || "Erro desconhecido");
-    } finally {
-      setLoadingLocation(false);
-    }
-  }
-
-  useEffect(() => {
-    socket.on("connect", () => {
-      console.log("Socket conectado");
-    });
-
-    socket.on("new_message", () => {
-      loadMessages();
-    });
-
-    socket.on("message_deleted", () => {
-      loadMessages();
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("new_message");
-      socket.off("message_deleted");
-    };
+  // Pull to refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchLocation(), loadMessages()]);
+    setRefreshing(false);
   }, [location, radius]);
 
-  if (!user) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>AroundMe</Text>
-
-        <Text style={styles.subtitle}>Escolha um apelido</Text>
-
-        <TextInput
-          placeholder="Digite seu nome"
-          placeholderTextColor="#888"
-          value={nickname}
-          onChangeText={setNickname}
-          style={styles.input}
-        />
-
-        <TouchableOpacity style={styles.button} onPress={saveUser}>
-          <Text style={styles.buttonText}>Entrar</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  async function sendMessage() {
-    if (!messageText.trim()) {
-      Alert.alert("Atenção", "Digite uma mensagem antes de enviar.");
+  // Salvar novo usuário
+  async function handleSaveUser() {
+    if (!nickname.trim()) {
+      Alert.alert("Atenção", "Digite um apelido para continuar.");
       return;
     }
-
-    if (!user) {
-      Alert.alert("Erro", "Usuário não encontrado.");
-      return;
-    }
-
-    if (!location) {
-      Alert.alert(
-        "Localização necessária",
-        "Atualize sua localização antes de enviar uma mensagem.",
-      );
-      return;
-    }
-
-    try {
-      await api.post("/messages", {
-        userId: user.id,
-        nickname: user.nickname,
-        district: address.district || "Local próximo",
-        text: messageText.trim(),
-        latitude: location.latitude,
-        longitude: location.longitude,
-      });
-
-      setMessageText("");
-    } catch (error: any) {
-      console.log("ERRO AO ENVIAR:", error?.message);
-      console.log("DETALHES:", error?.response?.data);
-
-      Alert.alert(
-        "Erro ao enviar",
-        error?.message || "Não foi possível enviar a mensagem.",
-      );
-    }
-  }
-
-  async function saveUser() {
-    if (!nickname.trim()) return;
 
     const newUser: User = {
       id: Crypto.randomUUID(),
@@ -249,320 +194,659 @@ export default function Home() {
 
     try {
       await api.post("/users", newUser);
-
       await saveStoredUser(newUser);
-
       setUser(newUser);
       setNickname("");
     } catch (error: any) {
-      console.log("ERRO AO SALVAR USUÁRIO:", error?.message);
-
-      Alert.alert("Erro", "Não foi possível criar seu usuário agora.");
+      console.log("Erro ao salvar usuário:", error);
+      Alert.alert("Erro", "Não foi possível conectar ao servidor agora.");
     }
   }
 
-  async function logoutUser() {
-    await removeStoredUser();
-
-    setUser(null);
-    setNickname("");
-    setLocation(null);
-    setAddress({
-      city: "",
-      district: "",
-      region: "",
-    });
-  }
-  const filteredMessages = messages.filter(
-    (message) => message.distance <= radius,
-  );
-
-  async function deleteMessage(message: Message) {
+  // Atualizar apelido sem deslogar
+  async function handleUpdateNickname(newNickname: string) {
     if (!user) return;
+    const updatedUser: User = { id: user.id, nickname: newNickname };
+    await api.post("/users", updatedUser);
+    await saveStoredUser(updatedUser);
+    setUser(updatedUser);
+  }
 
-    Alert.alert("Apagar mensagem", "Deseja apagar essa mensagem?", [
+  // Logout / Trocar usuário
+  async function handleLogout() {
+    Alert.alert("Sair da conta", "Deseja trocar de apelido?", [
       { text: "Cancelar", style: "cancel" },
       {
-        text: "Apagar",
+        text: "Sair",
         style: "destructive",
         onPress: async () => {
-          await api.delete(`/messages/${message.id}`, {
-            data: {
-              userId: user.id,
-            },
-          });
-
-          loadMessages();
+          await removeStoredUser();
+          setUser(null);
+          setNickname("");
+          setLocation(null);
         },
       },
     ]);
   }
 
-  async function pickMedia() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  // Enviar mensagem (Texto ou Mídia com legenda)
+  async function handleSendMessage() {
+    if (!user) {
+      Alert.alert("Erro", "Usuário não encontrado.");
+      return;
+    }
 
-    if (!permission.granted) {
-      Alert.alert("Permissão necessária", "Precisamos acessar sua galeria.");
+    let currentCoords = location;
+    if (!currentCoords) {
+      try {
+        const loc = await getUserCurrentLocation();
+        setLocation(loc.location);
+        setAddress(loc.address);
+        currentCoords = loc.location;
+      } catch (err) {
+        console.log("Erro ao obter coordenadas:", err);
+      }
+    }
+
+    if (!currentCoords) {
+      Alert.alert("Erro", "Localização indisponível. Tente novamente.");
+      return;
+    }
+
+    if (!messageText.trim() && !selectedMedia) {
+      return;
+    }
+
+    setSending(true);
+
+    try {
+      if (selectedMedia) {
+        // Envio com Mídia (multipart/form-data)
+        const formData = new FormData();
+        formData.append("userId", user.id);
+        formData.append("nickname", user.nickname);
+        formData.append("district", address.district || "Local próximo");
+        formData.append("latitude", String(currentCoords.latitude));
+        formData.append("longitude", String(currentCoords.longitude));
+        formData.append("type", selectedMedia.type);
+
+        if (messageText.trim()) {
+          formData.append("text", messageText.trim());
+        }
+
+        const ext = selectedMedia.type === "video" ? "mp4" : "jpg";
+        const filename =
+          selectedMedia.fileName || `upload_${Date.now()}.${ext}`;
+        const mimeType =
+          selectedMedia.mimeType ||
+          (selectedMedia.type === "video" ? "video/mp4" : "image/jpeg");
+
+        if (Platform.OS === "web") {
+          // No navegador Web, precisa ser um Blob real para o Multer processar
+          const response = await fetch(selectedMedia.uri);
+          const blob = await response.blob();
+          formData.append("media", blob, filename);
+        } else {
+          formData.append("media", {
+            uri: selectedMedia.uri,
+            name: filename,
+            type: mimeType,
+          } as any);
+        }
+
+        // Não passar Content-Type explicitamente no Axios para não sobrescrever o boundary
+        await api.post("/messages/media", formData);
+
+        setSelectedMedia(null);
+        setMessageText("");
+      } else {
+        // Envio de texto simples
+        await api.post("/messages", {
+          userId: user.id,
+          nickname: user.nickname,
+          district: address.district || "Local próximo",
+          text: messageText.trim(),
+          latitude: currentCoords.latitude,
+          longitude: currentCoords.longitude,
+        });
+
+        setMessageText("");
+      }
+
+      await loadMessages();
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 200);
+    } catch (error: any) {
+      console.log(
+        "Erro ao enviar mensagem:",
+        error?.response?.data || error?.message || error
+      );
+      Alert.alert(
+        "Erro ao enviar",
+        error?.response?.data?.error || "Não foi possível enviar a mensagem agora."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Apagar mensagem
+  async function handleDeleteMessage(msg: MessageData) {
+    if (!user) return;
+
+    Alert.alert("Apagar mensagem", "Deseja apagar esta mensagem?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Apagar",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/messages/${msg.id}`, {
+              data: { userId: user.id },
+            });
+            await loadMessages();
+          } catch (err) {
+            Alert.alert("Erro", "Não foi possível apagar a mensagem.");
+          }
+        },
+      },
+    ]);
+  }
+
+  // Tirar foto com a câmera
+  async function handleCameraPhoto() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permissão necessária", "Precisamos de acesso à câmera.");
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const asset = result.assets[0];
+      setSelectedMedia({
+        uri: asset.uri,
+        type: "image",
+        fileName: asset.fileName ?? undefined,
+        mimeType: asset.mimeType ?? "image/jpeg",
+      });
+    }
+  }
+
+  // Gravar vídeo com a câmera
+  async function handleCameraVideo() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permissão necessária", "Precisamos de acesso à câmera.");
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["videos"],
+      videoMaxDuration: 60,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const asset = result.assets[0];
+      setSelectedMedia({
+        uri: asset.uri,
+        type: "video",
+        fileName: asset.fileName ?? undefined,
+        mimeType: asset.mimeType ?? "video/mp4",
+      });
+    }
+  }
+
+  // Escolher foto ou vídeo da galeria
+  async function handleGalleryMedia() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permissão necessária", "Precisamos de acesso à sua galeria.");
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      mediaTypes: ["images", "videos"],
       quality: 0.8,
+      videoMaxDuration: 60,
     });
 
-    if (result.canceled) return;
-
-    const asset = result.assets[0];
-
-    const type = asset.type === "video" ? "video" : "image";
-
-    await sendMediaMessage(asset, type);
-  }
-
-  async function sendMediaMessage(asset: any, type: "image" | "video") {
-    if (!user || !location) {
-      Alert.alert("Erro", "Usuário ou localização não encontrada.");
-      return;
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const asset = result.assets[0];
+      const isVideo = asset.type === "video";
+      setSelectedMedia({
+        uri: asset.uri,
+        type: isVideo ? "video" : "image",
+        fileName: asset.fileName ?? undefined,
+        mimeType: asset.mimeType ?? (isVideo ? "video/mp4" : "image/jpeg"),
+      });
     }
-
-    const formData = new FormData();
-
-    formData.append("userId", user.id);
-    formData.append("nickname", user.nickname);
-    formData.append("district", address.district || "Local próximo");
-    formData.append("latitude", String(location.latitude));
-    formData.append("longitude", String(location.longitude));
-    formData.append("type", type);
-
-    formData.append("media", {
-      uri: asset.uri,
-      name: asset.fileName || `media.${type === "image" ? "jpg" : "mp4"}`,
-      type: asset.mimeType || (type === "image" ? "image/jpeg" : "video/mp4"),
-    } as any);
-
-    await api.post("/messages/media", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    });
   }
-  return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.appName}>AroundMe</Text>
 
-          <Text style={styles.headerSubtitle}>
-            {user.nickname} · {address.district || "Buscando localização..."}
+  // Tela de Login / Apelido
+  if (!user) {
+    return (
+      <View style={styles.loginContainer}>
+        <View style={styles.loginCard}>
+          <View style={styles.loginLogoCircle}>
+            <Text style={styles.loginLogoIcon}>📡</Text>
+          </View>
+
+          <Text style={styles.loginTitle}>AroundMe</Text>
+          <Text style={styles.loginSubtitle}>
+            Conecte-se com pessoas e conversas em tempo real ao seu redor.
           </Text>
 
-          <Text style={styles.headerLocation}>
-            {address.city ? `${address.city} - ${address.region}` : ""}
-          </Text>
+          <TextInput
+            placeholder="Digite seu apelido..."
+            placeholderTextColor="#6b7280"
+            value={nickname}
+            onChangeText={setNickname}
+            style={styles.loginInput}
+            maxLength={25}
+            autoFocus
+          />
+
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={handleSaveUser}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.loginButtonText}>Entrar no Chat</Text>
+          </TouchableOpacity>
         </View>
+      </View>
+    );
+  }
+
+  // Mensagens filtradas pelo raio
+  const filteredMessages = messages.filter((m) => {
+    if (typeof m.distance !== "number") return true;
+    return m.distance <= radius;
+  });
+
+  return (
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      {/* Header Premium com Radar & Status */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.headerUserSection}
+          onPress={() => setProfileModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.brandRow}>
+            <Text style={styles.brandTitle}>AroundMe</Text>
+            <View
+              style={[
+                styles.statusDot,
+                socketConnected ? styles.statusDotOnline : styles.statusDotOffline,
+              ]}
+            />
+            <Text style={styles.statusText}>
+              {socketConnected ? "Ao vivo" : "Conectando..."}
+            </Text>
+          </View>
+
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            👤 {user.nickname} · 📍 {address.district}
+          </Text>
+
+          {Boolean(address.city) && (
+            <Text style={styles.headerLocation}>
+              {address.city} {address.region ? `(${address.region})` : ""}
+            </Text>
+          )}
+        </TouchableOpacity>
 
         <View style={styles.headerActions}>
+          {/* Botão de Raio estilo Tinder */}
           <TouchableOpacity
-            style={styles.radiusHeaderButton}
+            style={styles.radiusButton}
             onPress={() => setRadiusModalVisible(true)}
-            onLongPress={() => setRadiusModalVisible(true)}
+            activeOpacity={0.8}
           >
-            <Text style={styles.radiusHeaderText}>{radius} km</Text>
+            <Text style={styles.radiusIcon}>📡</Text>
+            <Text style={styles.radiusButtonText}>{radius} km</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={logoutUser}>
-            <Text style={styles.changeNameText}>Trocar</Text>
+          {/* Perfil */}
+          <TouchableOpacity
+            onPress={() => setProfileModalVisible(true)}
+            style={styles.profileButton}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.profileButtonText}>Perfil</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      <View style={styles.content}>
-        <SendMessageBox
-          value={messageText}
-          onChangeText={setMessageText}
-          onSend={sendMessage}
-          onPickMedia={pickMedia}
+      {/* Feed de Mensagens Central */}
+      <KeyboardAvoidingView
+        style={styles.chatArea}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+      >
+        <FlatList
+          ref={flatListRef}
+          data={filteredMessages}
+          keyExtractor={(item) => item.id}
+          style={styles.messageList}
+          contentContainerStyle={styles.messageListContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#3b82f6"
+              colors={["#3b82f6"]}
+            />
+          }
+          onContentSizeChange={() => {
+            if (filteredMessages.length > 0) {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>🛰️</Text>
+              <Text style={styles.emptyTitle}>Nenhuma mensagem no raio de {radius} km</Text>
+              <Text style={styles.emptySubtitle}>
+                Seja o primeiro a enviar uma mensagem, foto ou vídeo para quem estiver por perto!
+              </Text>
+              {loadingLocation && (
+                <View style={styles.loadingGpsRow}>
+                  <ActivityIndicator size="small" color="#60a5fa" />
+                  <Text style={styles.loadingGpsText}>Sintonizando GPS...</Text>
+                </View>
+              )}
+            </View>
+          }
+          renderItem={({ item }) => (
+            <MessageCard
+              message={item}
+              currentUserId={user.id}
+              onDelete={handleDeleteMessage}
+              onPressImage={(url, sender) => {
+                setLightbox({ visible: true, url, sender });
+              }}
+            />
+          )}
         />
 
-        <Text style={styles.feedTitle}>Mensagens próximas</Text>
+        {/* Caixa de Envio Ergonômica Fixada Embaixo */}
+        <View style={styles.bottomBar}>
+          <SendMessageBox
+            value={messageText}
+            onChangeText={setMessageText}
+            onSend={handleSendMessage}
+            onOpenMediaPicker={() => setMediaPickerVisible(true)}
+            selectedMedia={selectedMedia}
+            onRemoveMedia={() => setSelectedMedia(null)}
+            loading={sending}
+          />
+        </View>
+      </KeyboardAvoidingView>
 
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.feed}
-          showsVerticalScrollIndicator={false}
-        >
-          {filteredMessages.map((message) => (
-            <MessageCard
-              key={message.id}
-              message={message}
-              currentUserId={user.id}
-              onDelete={deleteMessage}
-            />
-          ))}
-        </ScrollView>
-        {filteredMessages.length === 0 && (
-          <Text style={styles.emptyText}>
-            Nenhuma mensagem encontrada nesse raio.
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={getCurrentLocation}>
-          <Text style={styles.buttonText}>
-            {loadingLocation ? "Buscando..." : "Atualizar localização"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Modal de Raio Estilo Tinder */}
       <RadiusModal
         visible={radiusModalVisible}
         radius={radius}
         onSelectRadius={setRadius}
         onClose={() => setRadiusModalVisible(false)}
+        totalMessagesCount={filteredMessages.length}
       />
-    </View>
+
+      {/* Modal de Escolha de Mídia (Câmera, Vídeo, Galeria) */}
+      <MediaPickerModal
+        visible={mediaPickerVisible}
+        onClose={() => setMediaPickerVisible(false)}
+        onSelectCameraPhoto={handleCameraPhoto}
+        onSelectCameraVideo={handleCameraVideo}
+        onSelectGallery={handleGalleryMedia}
+      />
+
+      {/* Modal de Visualização de Imagem em Tela Cheia (Lightbox) */}
+      <ImageModal
+        visible={lightbox.visible}
+        imageUrl={lightbox.url}
+        senderName={lightbox.sender}
+        onClose={() => setLightbox({ visible: false, url: null, sender: "" })}
+      />
+
+      {/* Modal de Perfil do Usuário */}
+      <ProfileModal
+        visible={profileModalVisible}
+        user={user}
+        district={address.district}
+        city={address.city}
+        onClose={() => setProfileModalVisible(false)}
+        onUpdateNickname={handleUpdateNickname}
+        onLogout={handleLogout}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: "#0f0f0f",
+    backgroundColor: "#0d1117",
+  },
+  loginContainer: {
+    flex: 1,
+    backgroundColor: "#0d1117",
     justifyContent: "center",
     padding: 24,
   },
-  title: {
-    color: "#fff",
-    fontSize: 42,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 10,
+  loginCard: {
+    backgroundColor: "#161b22",
+    borderRadius: 28,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: "#30363d",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  subtitle: {
-    color: "#aaa",
+  loginLogoCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(37, 99, 235, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(37, 99, 235, 0.4)",
+  },
+  loginLogoIcon: {
+    fontSize: 28,
+  },
+  loginTitle: {
+    color: "#f0f6fc",
+    fontSize: 32,
+    fontWeight: "800",
+    marginBottom: 8,
+    letterSpacing: -0.5,
+  },
+  loginSubtitle: {
+    color: "#8b949e",
     textAlign: "center",
-    marginBottom: 20,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  loginInput: {
+    width: "100%",
+    backgroundColor: "#21262d",
+    color: "#ffffff",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#30363d",
+    marginBottom: 18,
   },
-  welcome: {
-    color: "#fff",
-    textAlign: "center",
-    fontSize: 24,
-    marginBottom: 15,
-  },
-  input: {
-    backgroundColor: "#1a1a1a",
-    color: "#fff",
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  button: {
+  loginButton: {
+    width: "100%",
     backgroundColor: "#2563eb",
-    padding: 15,
-    borderRadius: 12,
-    marginTop: 10,
+    paddingVertical: 15,
+    borderRadius: 14,
+    alignItems: "center",
   },
-  buttonText: {
-    color: "#fff",
-    textAlign: "center",
-    fontWeight: "bold",
+  loginButtonText: {
+    color: "#ffffff",
     fontSize: 16,
+    fontWeight: "700",
   },
-  radiusText: {
-    color: "#aaa",
-    fontWeight: "bold",
-  },
-  radiusTextActive: {
-    color: "#fff",
-  },
-  footerText: {
-    color: "#666",
-    textAlign: "center",
-    marginTop: 20,
-  },
-
-  feed: {
-    flex: 1,
-  },
-  changeNameText: {
-    color: "#60a5fa",
-    textAlign: "center",
-    marginBottom: 20,
-    fontWeight: "bold",
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: "#0f0f0f",
-  },
-
   header: {
-    paddingTop: 55,
-    paddingHorizontal: 24,
-    paddingBottom: 18,
-    backgroundColor: "#111",
-    borderBottomWidth: 1,
-    borderBottomColor: "#222",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: "#161b22",
+    borderBottomWidth: 1,
+    borderBottomColor: "#21262d",
   },
-
-  appName: {
-    color: "#fff",
-    fontSize: 30,
-    fontWeight: "bold",
-  },
-
-  headerSubtitle: {
-    color: "#888",
-    marginTop: 4,
-  },
-
-  content: {
+  headerUserSection: {
     flex: 1,
-    padding: 20,
+    marginRight: 10,
   },
-
-  feedTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 12,
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#222",
-    backgroundColor: "#111",
+  brandTitle: {
+    color: "#f0f6fc",
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.3,
   },
-  emptyText: {
-    color: "#666",
-    textAlign: "center",
-    marginTop: 20,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 4,
+  },
+  statusDotOnline: {
+    backgroundColor: "#10b981",
+  },
+  statusDotOffline: {
+    backgroundColor: "#f59e0b",
+  },
+  statusText: {
+    color: "#8b949e",
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  headerSubtitle: {
+    color: "#cbd5e1",
+    fontSize: 13,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  headerLocation: {
+    color: "#6b7280",
+    fontSize: 11,
+    marginTop: 1,
   },
   headerActions: {
-    alignItems: "flex-end",
-    gap: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-
-  headerLocation: {
-    color: "#666",
-    marginTop: 2,
-    fontSize: 12,
-  },
-
-  radiusHeaderButton: {
+  radiusButton: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#2563eb",
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     borderRadius: 999,
+    gap: 5,
+    shadowColor: "#2563eb",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
-
-  radiusHeaderText: {
-    color: "#fff",
-    fontWeight: "bold",
+  radiusIcon: {
+    fontSize: 13,
+  },
+  radiusButtonText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  profileButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "#21262d",
+  },
+  profileButtonText: {
+    color: "#9ca3af",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  chatArea: {
+    flex: 1,
+  },
+  messageList: {
+    flex: 1,
+  },
+  messageListContent: {
+    padding: 16,
+    flexGrow: 1,
+  },
+  bottomBar: {
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 10,
+    backgroundColor: "#0d1117",
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+    marginTop: 80,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    color: "#f0f6fc",
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    color: "#8b949e",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  loadingGpsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 16,
+  },
+  loadingGpsText: {
+    color: "#60a5fa",
+    fontSize: 12,
   },
 });
