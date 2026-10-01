@@ -8,6 +8,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { triggerImpact, triggerSelection } from "../services/hapticsService";
 
 interface RadiusModalProps {
   visible: boolean;
@@ -85,6 +86,9 @@ export default function RadiusModal({
                   step={1}
                   value={radius}
                   onValueChange={onSelectRadius}
+                  onSlidingComplete={() => {
+                    triggerSelection();
+                  }}
                   minimumTrackTintColor="#2563eb"
                   maximumTrackTintColor="#374151"
                   thumbTintColor="#3b82f6"
@@ -107,7 +111,10 @@ export default function RadiusModal({
                         styles.presetChip,
                         isActive && styles.presetChipActive,
                       ]}
-                      onPress={() => onSelectRadius(item.value)}
+                      onPress={() => {
+                        triggerSelection();
+                        onSelectRadius(item.value);
+                      }}
                     >
                       <Text
                         style={[
@@ -129,7 +136,13 @@ export default function RadiusModal({
               )}
 
               {/* Botão de Fechar / Confirmar */}
-              <TouchableOpacity style={styles.confirmButton} onPress={onClose}>
+              <TouchableOpacity
+                style={styles.confirmButton}
+                onPress={() => {
+                  triggerImpact("medium");
+                  onClose();
+                }}
+              >
                 <Text style={styles.confirmText}>Confirmar Raio</Text>
               </TouchableOpacity>
             </View>

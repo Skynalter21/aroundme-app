@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { resolveMediaUrl } from "../services/config";
+import { triggerImpact } from "../services/hapticsService";
 
 export interface MessageData {
   id: string;
@@ -81,7 +82,10 @@ export default function MessageCard({
     <TouchableOpacity
       activeOpacity={0.85}
       onLongPress={() => {
-        if (isMine) onDelete(message);
+        if (isMine) {
+          triggerImpact("medium");
+          onDelete(message);
+        }
       }}
       style={[
         styles.wrapper,

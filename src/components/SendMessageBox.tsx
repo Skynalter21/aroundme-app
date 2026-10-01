@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { triggerImpact } from "../services/hapticsService";
 
 export interface SelectedMedia {
   uri: string;
@@ -67,7 +68,10 @@ export default function SendMessageBox({
 
           <TouchableOpacity
             style={styles.removeMediaButton}
-            onPress={onRemoveMedia}
+            onPress={() => {
+              triggerImpact("light");
+              onRemoveMedia();
+            }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Text style={styles.removeMediaText}>✕</Text>
@@ -79,7 +83,10 @@ export default function SendMessageBox({
       <View style={styles.inputRow}>
         <TouchableOpacity
           style={styles.mediaButton}
-          onPress={onOpenMediaPicker}
+          onPress={() => {
+            triggerImpact("light");
+            onOpenMediaPicker();
+          }}
           disabled={loading}
           activeOpacity={0.7}
         >
@@ -101,7 +108,10 @@ export default function SendMessageBox({
 
         <TouchableOpacity
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          onPress={onSend}
+          onPress={() => {
+            triggerImpact("medium");
+            onSend();
+          }}
           disabled={!canSend}
           activeOpacity={0.8}
         >

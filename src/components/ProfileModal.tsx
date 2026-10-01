@@ -10,6 +10,10 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import {
+  triggerImpact,
+  triggerNotificationSuccess,
+} from "../services/hapticsService";
 
 interface ProfileModalProps {
   visible: boolean;
@@ -51,6 +55,7 @@ export default function ProfileModal({
     setSaving(true);
     try {
       await onUpdateNickname(editingNickname.trim());
+      triggerNotificationSuccess();
       Alert.alert("Sucesso", "Apelido atualizado!");
       onClose();
     } catch (error) {

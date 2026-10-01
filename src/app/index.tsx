@@ -16,15 +16,33 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import CreateRoomModal from "../components/CreateRoomModal";
 import ImageModal from "../components/ImageModal";
 import MediaPickerModal from "../components/MediaPickerModal";
 import MessageCard, { MessageData } from "../components/MessageCard";
 import ProfileModal from "../components/ProfileModal";
 import RadiusModal from "../components/RadiusModal";
+import RoomCard from "../components/RoomCard";
+import RoomChatModal from "../components/RoomChatModal";
+import RoomPasswordModal from "../components/RoomPasswordModal";
 import SendMessageBox, { SelectedMedia } from "../components/SendMessageBox";
+import { RoomData } from "../types/room";
 
+import * as Notifications from "expo-notifications";
 import api from "../services/api";
-import { getUserCurrentLocation } from "../services/locationService";
+import {
+  triggerImpact,
+  triggerNotificationSuccess,
+  triggerSelection,
+} from "../services/hapticsService";
+import {
+  getUserCurrentLocation,
+  calculateDistanceKm,
+} from "../services/locationService";
+import {
+  registerForPushNotificationsAsync,
+  displayLocalMessageNotification,
+} from "../services/notificationService";
 import socket from "../services/socket";
 import {
   getStoredUser,
@@ -60,6 +78,22 @@ export default function Home() {
   const [messageText, setMessageText] = useState("");
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [sending, setSending] = useState(false);
+  const [pushToken, setPushToken] = useState<string | null>(null);
+
+  // Navegação por Abas
+  const [activeTab, setActiveTab] = useState<"feed" | "rooms">("feed");
+
+  // Estado das Salas de Bate-Papo
+  const [rooms, setRooms] = useState<RoomData[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [createRoomVisible, setCreateRoomVisible] = useState(false);
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [selectedRoomForPassword, setSelectedRoomForPassword] =
+    useState<RoomData | null>(null);
+  const [activeRoom, setActiveRoom] = useState<RoomData | null>(null);
+  const [activeRoomRole, setActiveRoomRole] = useState<
+    "owner" | "moderator" | "member"
+  >("member");
 
   // Modais e mídias
   const [radiusModalVisible, setRadiusModalVisible] = useState(false);
@@ -77,6 +111,53 @@ export default function Home() {
   });
 
   const flatListRef = useRef<FlatList<MessageData>>(null);
+
+  // Inicializa serviço de notificações locais e obtém push token
+  useEffect(() => {
+    let isMounted = true;
+    async function initNotifications() {
+      const token = await registerForPushNotificationsAsync();
+      if (isMounted && token) {
+        setPushToken(token);
+      }
+    }
+    initNotifications();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Listener para quando o usuário toca em uma notificação recebida
+  useEffect(() => {
+    const subscription =
+      Notifications.addNotificationResponseReceivedListener(() => {
+        loadMessages();
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 300);
+      });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [location, radius]);
+
+  // Sincroniza usuário, localização e push token no backend
+  useEffect(() => {
+    if (user) {
+      api
+        .post("/users", {
+          id: user.id,
+          nickname: user.nickname,
+          pushToken: pushToken || null,
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+        })
+        .catch((err) =>
+          console.log("[Sync] Erro ao sincronizar push token:", err?.message || err)
+        );
+    }
+  }, [user?.id, user?.nickname, pushToken, location?.latitude, location?.longitude]);
 
   // Carrega usuário salvo
   useEffect(() => {
@@ -96,10 +177,11 @@ export default function Home() {
     }
   }, [user]);
 
-  // Carrega mensagens sempre que localização ou raio mudar
+  // Carrega mensagens e salas sempre que localização ou raio mudar
   useEffect(() => {
     if (location) {
       loadMessages();
+      loadRooms();
     }
   }, [location, radius]);
 
@@ -115,7 +197,34 @@ export default function Home() {
       setSocketConnected(false);
     }
 
-    function onNewMessage() {
+    function onNewMessage(newMsg?: MessageData) {
+      if (newMsg && user && newMsg.userId !== user.id) {
+        // Feedback tátil imediato de nova mensagem
+        triggerNotificationSuccess();
+
+        // Checa se a mensagem está dentro do raio do usuário
+        let isWithinRadius = true;
+        if (
+          location &&
+          typeof newMsg.latitude === "number" &&
+          typeof newMsg.longitude === "number"
+        ) {
+          const dist = calculateDistanceKm(
+            location.latitude,
+            location.longitude,
+            newMsg.latitude,
+            newMsg.longitude
+          );
+          if (dist > radius) {
+            isWithinRadius = false;
+          }
+        }
+
+        if (isWithinRadius) {
+          displayLocalMessageNotification(newMsg);
+        }
+      }
+
       loadMessages();
     }
 
@@ -123,18 +232,24 @@ export default function Home() {
       loadMessages();
     }
 
+    function onNewRoom() {
+      loadRooms();
+    }
+
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("new_message", onNewMessage);
     socket.on("message_deleted", onMessageDeleted);
+    socket.on("new_room", onNewRoom);
 
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("new_message", onNewMessage);
       socket.off("message_deleted", onMessageDeleted);
+      socket.off("new_room", onNewRoom);
     };
-  }, [location, radius]);
+  }, [user, location, radius]);
 
   // Busca localização do usuário com reverse geocoding
   async function fetchLocation() {
@@ -173,12 +288,110 @@ export default function Home() {
     }
   }
 
+  // Busca salas no raio
+  async function loadRooms() {
+    if (!location) return;
+
+    try {
+      setLoadingRooms(true);
+      const response = await api.get("/rooms", {
+        params: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          radius,
+        },
+      });
+
+      setRooms(response.data);
+    } catch (error) {
+      console.log("Erro ao carregar salas:", error);
+    } finally {
+      setLoadingRooms(false);
+    }
+  }
+
   // Pull to refresh
   const onRefresh = useCallback(async () => {
+    triggerSelection();
     setRefreshing(true);
-    await Promise.all([fetchLocation(), loadMessages()]);
+    await Promise.all([fetchLocation(), loadMessages(), loadRooms()]);
     setRefreshing(false);
   }, [location, radius]);
+
+  // Selecionar / Entrar em uma sala
+  async function handleSelectRoom(room: RoomData) {
+    if (!user) {
+      Alert.alert("Atenção", "Crie seu apelido primeiro para entrar em salas.");
+      return;
+    }
+
+    if (room.isProtected && room.ownerId !== user.id) {
+      setSelectedRoomForPassword(room);
+      setPasswordModalVisible(true);
+      return;
+    }
+
+    try {
+      const res = await api.post(`/rooms/${room.id}/join`, {
+        userId: user.id,
+        nickname: user.nickname,
+      });
+
+      setActiveRoomRole(
+        res.data.role || (room.ownerId === user.id ? "owner" : "member")
+      );
+      setActiveRoom(room);
+    } catch (err: any) {
+      Alert.alert(
+        "Erro ao entrar",
+        err?.response?.data?.error || "Não foi possível entrar na sala."
+      );
+    }
+  }
+
+  // Confirmar senha da sala
+  async function handlePasswordSubmit(password: string) {
+    if (!selectedRoomForPassword || !user) return;
+
+    const res = await api.post(`/rooms/${selectedRoomForPassword.id}/join`, {
+      userId: user.id,
+      nickname: user.nickname,
+      password,
+    });
+
+    setActiveRoomRole(res.data.role || "member");
+    setActiveRoom(selectedRoomForPassword);
+  }
+
+  // Criar nova sala
+  async function handleCreateRoom(data: {
+    name: string;
+    description?: string;
+    category: string;
+    password?: string;
+    maxMembers: number;
+  }) {
+    if (!user) return;
+
+    let coords = location;
+    if (!coords) {
+      const loc = await getUserCurrentLocation();
+      coords = loc.location;
+    }
+
+    const res = await api.post("/rooms", {
+      ...data,
+      ownerId: user.id,
+      nickname: user.nickname,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      district: address.district,
+    });
+
+    await loadRooms();
+    setActiveRoomRole("owner");
+    setActiveRoom(res.data);
+  }
 
   // Salvar novo usuário
   async function handleSaveUser() {
@@ -193,8 +406,14 @@ export default function Home() {
     };
 
     try {
-      await api.post("/users", newUser);
+      await api.post("/users", {
+        ...newUser,
+        pushToken: pushToken || null,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      });
       await saveStoredUser(newUser);
+      triggerNotificationSuccess();
       setUser(newUser);
       setNickname("");
     } catch (error: any) {
@@ -207,19 +426,26 @@ export default function Home() {
   async function handleUpdateNickname(newNickname: string) {
     if (!user) return;
     const updatedUser: User = { id: user.id, nickname: newNickname };
-    await api.post("/users", updatedUser);
+    await api.post("/users", {
+      ...updatedUser,
+      pushToken: pushToken || null,
+      latitude: location?.latitude,
+      longitude: location?.longitude,
+    });
     await saveStoredUser(updatedUser);
     setUser(updatedUser);
   }
 
   // Logout / Trocar usuário
   async function handleLogout() {
+    triggerImpact("light");
     Alert.alert("Sair da conta", "Deseja trocar de apelido?", [
       { text: "Cancelar", style: "cancel" },
       {
         text: "Sair",
         style: "destructive",
         onPress: async () => {
+          triggerImpact("medium");
           await removeStoredUser();
           setUser(null);
           setNickname("");
@@ -314,6 +540,7 @@ export default function Home() {
       }
 
       await loadMessages();
+      triggerImpact("medium");
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 200);
@@ -342,6 +569,7 @@ export default function Home() {
         style: "destructive",
         onPress: async () => {
           try {
+            triggerImpact("light");
             await api.delete(`/messages/${msg.id}`, {
               data: { userId: user.id },
             });
@@ -525,72 +753,220 @@ export default function Home() {
         </View>
       </View>
 
-      {/* Feed de Mensagens Central */}
-      <KeyboardAvoidingView
-        style={styles.chatArea}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
-      >
-        <FlatList
-          ref={flatListRef}
-          data={filteredMessages}
-          keyExtractor={(item) => item.id}
-          style={styles.messageList}
-          contentContainerStyle={styles.messageListContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#3b82f6"
-              colors={["#3b82f6"]}
-            />
-          }
-          onContentSizeChange={() => {
-            if (filteredMessages.length > 0) {
-              flatListRef.current?.scrollToEnd({ animated: true });
-            }
+      {/* Barra de Abas: Feed Local vs Salas Próximas */}
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === "feed" && styles.tabButtonActive]}
+          onPress={() => {
+            triggerSelection();
+            setActiveTab("feed");
           }}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>🛰️</Text>
-              <Text style={styles.emptyTitle}>Nenhuma mensagem no raio de {radius} km</Text>
-              <Text style={styles.emptySubtitle}>
-                Seja o primeiro a enviar uma mensagem, foto ou vídeo para quem estiver por perto!
-              </Text>
-              {loadingLocation && (
-                <View style={styles.loadingGpsRow}>
-                  <ActivityIndicator size="small" color="#60a5fa" />
-                  <Text style={styles.loadingGpsText}>Sintonizando GPS...</Text>
-                </View>
-              )}
-            </View>
-          }
-          renderItem={({ item }) => (
-            <MessageCard
-              message={item}
-              currentUserId={user.id}
-              onDelete={handleDeleteMessage}
-              onPressImage={(url, sender) => {
-                setLightbox({ visible: true, url, sender });
-              }}
-            />
-          )}
-        />
+          activeOpacity={0.8}
+        >
+          <Text
+            style={[
+              styles.tabButtonText,
+              activeTab === "feed" && styles.tabButtonTextActive,
+            ]}
+          >
+            🌐 Feed Local
+          </Text>
+        </TouchableOpacity>
 
-        {/* Caixa de Envio Ergonômica Fixada Embaixo */}
-        <View style={styles.bottomBar}>
-          <SendMessageBox
-            value={messageText}
-            onChangeText={setMessageText}
-            onSend={handleSendMessage}
-            onOpenMediaPicker={() => setMediaPickerVisible(true)}
-            selectedMedia={selectedMedia}
-            onRemoveMedia={() => setSelectedMedia(null)}
-            loading={sending}
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === "rooms" && styles.tabButtonActive]}
+          onPress={() => {
+            triggerSelection();
+            setActiveTab("rooms");
+          }}
+          activeOpacity={0.8}
+        >
+          <Text
+            style={[
+              styles.tabButtonText,
+              activeTab === "rooms" && styles.tabButtonTextActive,
+            ]}
+          >
+            🏘️ Salas Próximas
+          </Text>
+          {rooms.length > 0 && (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>{rooms.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* ABA 1: FEED LOCAL */}
+      {activeTab === "feed" && (
+        <KeyboardAvoidingView
+          style={styles.chatArea}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+        >
+          <FlatList
+            ref={flatListRef}
+            data={filteredMessages}
+            keyExtractor={(item) => item.id}
+            style={styles.messageList}
+            contentContainerStyle={styles.messageListContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#3b82f6"
+                colors={["#3b82f6"]}
+              />
+            }
+            onContentSizeChange={() => {
+              if (filteredMessages.length > 0) {
+                flatListRef.current?.scrollToEnd({ animated: true });
+              }
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyIcon}>🛰️</Text>
+                <Text style={styles.emptyTitle}>
+                  Nenhuma mensagem no raio de {radius} km
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  Seja o primeiro a enviar uma mensagem, foto ou vídeo para quem
+                  estiver por perto!
+                </Text>
+                {loadingLocation && (
+                  <View style={styles.loadingGpsRow}>
+                    <ActivityIndicator size="small" color="#60a5fa" />
+                    <Text style={styles.loadingGpsText}>Sintonizando GPS...</Text>
+                  </View>
+                )}
+              </View>
+            }
+            renderItem={({ item }) => (
+              <MessageCard
+                message={item}
+                currentUserId={user.id}
+                onDelete={handleDeleteMessage}
+                onPressImage={(url, sender) => {
+                  setLightbox({ visible: true, url, sender });
+                }}
+              />
+            )}
+          />
+
+          {/* Caixa de Envio Ergonômica Fixada Embaixo */}
+          <View style={styles.bottomBar}>
+            <SendMessageBox
+              value={messageText}
+              onChangeText={setMessageText}
+              onSend={handleSendMessage}
+              onOpenMediaPicker={() => setMediaPickerVisible(true)}
+              selectedMedia={selectedMedia}
+              onRemoveMedia={() => setSelectedMedia(null)}
+              loading={sending}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      )}
+
+      {/* ABA 2: SALAS PRÓXIMAS */}
+      {activeTab === "rooms" && (
+        <View style={styles.roomsContainer}>
+          <View style={styles.roomsHeaderRow}>
+            <View style={styles.roomsHeaderInfo}>
+              <Text style={styles.roomsSectionTitle}>Salas na Região</Text>
+              <Text style={styles.roomsSectionSubtitle}>
+                No raio de até {radius} km
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.createRoomButton}
+              onPress={() => {
+                triggerImpact("medium");
+                setCreateRoomVisible(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.createRoomButtonText}>+ Criar Sala</Text>
+            </TouchableOpacity>
+          </View>
+
+          <FlatList
+            data={rooms}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.roomsListContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#3b82f6"
+                colors={["#3b82f6"]}
+              />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyIcon}>🏘️</Text>
+                <Text style={styles.emptyTitle}>
+                  Nenhuma sala criada por perto
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  Crie a primeira sala da sua região para reunir a vizinhança ou amigos!
+                </Text>
+                <TouchableOpacity
+                  style={[styles.createRoomButton, { marginTop: 14 }]}
+                  onPress={() => {
+                    triggerImpact("medium");
+                    setCreateRoomVisible(true);
+                  }}
+                >
+                  <Text style={styles.createRoomButtonText}>
+                    + Criar Sala Agora
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            }
+            renderItem={({ item }) => (
+              <RoomCard
+                room={item}
+                currentUserId={user.id}
+                onPress={handleSelectRoom}
+              />
+            )}
           />
         </View>
-      </KeyboardAvoidingView>
+      )}
+
+      {/* Modal de Criar Sala */}
+      <CreateRoomModal
+        visible={createRoomVisible}
+        onClose={() => setCreateRoomVisible(false)}
+        onCreateRoom={handleCreateRoom}
+      />
+
+      {/* Modal de Senha para Entrar em Sala Protegida */}
+      <RoomPasswordModal
+        visible={passwordModalVisible}
+        room={selectedRoomForPassword}
+        onClose={() => {
+          setPasswordModalVisible(false);
+          setSelectedRoomForPassword(null);
+        }}
+        onSubmit={handlePasswordSubmit}
+      />
+
+      {/* Modal de Chat da Sala Ativa */}
+      <RoomChatModal
+        visible={Boolean(activeRoom)}
+        room={activeRoom}
+        user={user}
+        initialRole={activeRoomRole}
+        onClose={() => {
+          setActiveRoom(null);
+          loadRooms();
+        }}
+      />
 
       {/* Modal de Raio Estilo Tinder */}
       <RadiusModal
@@ -598,7 +974,9 @@ export default function Home() {
         radius={radius}
         onSelectRadius={setRadius}
         onClose={() => setRadiusModalVisible(false)}
-        totalMessagesCount={filteredMessages.length}
+        totalMessagesCount={
+          activeTab === "feed" ? filteredMessages.length : rooms.length
+        }
       />
 
       {/* Modal de Escolha de Mídia (Câmera, Vídeo, Galeria) */}
@@ -848,5 +1226,96 @@ const styles = StyleSheet.create({
   loadingGpsText: {
     color: "#60a5fa",
     fontSize: 12,
+  },
+  tabsContainer: {
+    flexDirection: "row",
+    backgroundColor: "#161b22",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#21262d",
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: "#0d1117",
+    borderWidth: 1,
+    borderColor: "#30363d",
+    gap: 6,
+  },
+  tabButtonActive: {
+    backgroundColor: "#1e3a8a",
+    borderColor: "#3b82f6",
+  },
+  tabButtonText: {
+    color: "#8b949e",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  tabButtonTextActive: {
+    color: "#ffffff",
+  },
+  tabBadge: {
+    backgroundColor: "#2563eb",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  tabBadgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  roomsContainer: {
+    flex: 1,
+    backgroundColor: "#0d1117",
+  },
+  roomsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#21262d",
+  },
+  roomsHeaderInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  roomsSectionTitle: {
+    color: "#f0f6fc",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  roomsSectionSubtitle: {
+    color: "#8b949e",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  createRoomButton: {
+    backgroundColor: "#2563eb",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    shadowColor: "#2563eb",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  createRoomButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  roomsListContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
 });
