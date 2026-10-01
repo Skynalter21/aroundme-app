@@ -28,8 +28,10 @@ import RoomPasswordModal from "../components/RoomPasswordModal";
 import SendMessageBox, { SelectedMedia } from "../components/SendMessageBox";
 import { RoomData } from "../types/room";
 
+import { Image } from "expo-image";
 import * as Notifications from "expo-notifications";
 import api from "../services/api";
+import { resolveMediaUrl } from "../services/config";
 import {
   triggerImpact,
   triggerNotificationSuccess,
@@ -53,6 +55,7 @@ import {
 interface User {
   id: string;
   nickname: string;
+  avatarUrl?: string | null;
 }
 
 interface UserLocation {
@@ -325,7 +328,9 @@ export default function Home() {
       return;
     }
 
-    if (room.isProtected && room.ownerId !== user.id) {
+    const isOwner = room.ownerId === user.id;
+
+    if (room.isProtected && !isOwner) {
       setSelectedRoomForPassword(room);
       setPasswordModalVisible(true);
       return;
@@ -338,10 +343,17 @@ export default function Home() {
       });
 
       setActiveRoomRole(
-        res.data.role || (room.ownerId === user.id ? "owner" : "member")
+        res.data.role || (isOwner ? "owner" : "member")
       );
       setActiveRoom(room);
     } catch (err: any) {
+      // Se a API retornar 401 (exigindo senha), abre o modal de senha como fallback
+      if (err?.response?.status === 401 && room.isProtected) {
+        setSelectedRoomForPassword(room);
+        setPasswordModalVisible(true);
+        return;
+      }
+
       Alert.alert(
         "Erro ao entrar",
         err?.response?.data?.error || "Não foi possível entrar na sala."
@@ -359,7 +371,8 @@ export default function Home() {
       password,
     });
 
-    setActiveRoomRole(res.data.role || "member");
+    const isOwner = selectedRoomForPassword.ownerId === user.id;
+    setActiveRoomRole(res.data.role || (isOwner ? "owner" : "member"));
     setActiveRoom(selectedRoomForPassword);
   }
 
@@ -422,16 +435,27 @@ export default function Home() {
     }
   }
 
-  // Atualizar apelido sem deslogar
-  async function handleUpdateNickname(newNickname: string) {
+  // Atualizar usuário (apelido e/ou foto) sem deslogar
+  async function handleUpdateUser(data: {
+    nickname: string;
+    avatarUrl?: string | null;
+  }) {
     if (!user) return;
-    const updatedUser: User = { id: user.id, nickname: newNickname };
-    await api.post("/users", {
-      ...updatedUser,
-      pushToken: pushToken || null,
-      latitude: location?.latitude,
-      longitude: location?.longitude,
-    });
+    const updatedUser: User = {
+      id: user.id,
+      nickname: data.nickname,
+      avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : user.avatarUrl,
+    };
+    try {
+      await api.post("/users", {
+        ...updatedUser,
+        pushToken: pushToken || null,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      });
+    } catch (e) {
+      console.log("Erro ao sincronizar usuário com a API:", e);
+    }
     await saveStoredUser(updatedUser);
     setUser(updatedUser);
   }
@@ -707,28 +731,46 @@ export default function Home() {
           onPress={() => setProfileModalVisible(true)}
           activeOpacity={0.7}
         >
-          <View style={styles.brandRow}>
-            <Text style={styles.brandTitle}>AroundMe</Text>
-            <View
-              style={[
-                styles.statusDot,
-                socketConnected ? styles.statusDotOnline : styles.statusDotOffline,
-              ]}
-            />
-            <Text style={styles.statusText}>
-              {socketConnected ? "Ao vivo" : "Conectando..."}
-            </Text>
+          <View style={styles.headerUserRow}>
+            {user.avatarUrl ? (
+              <Image
+                source={{ uri: resolveMediaUrl(user.avatarUrl)! }}
+                style={styles.headerAvatar}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={styles.headerAvatarFallback}>
+                <Text style={styles.headerAvatarText}>
+                  {(user.nickname || "A").charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.headerUserTextContainer}>
+              <View style={styles.brandRow}>
+                <Text style={styles.brandTitle}>AroundMe</Text>
+                <View
+                  style={[
+                    styles.statusDot,
+                    socketConnected ? styles.statusDotOnline : styles.statusDotOffline,
+                  ]}
+                />
+                <Text style={styles.statusText}>
+                  {socketConnected ? "Ao vivo" : "Conectando..."}
+                </Text>
+              </View>
+
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                {user.nickname} · 📍 {address.district}
+              </Text>
+
+              {Boolean(address.city) && (
+                <Text style={styles.headerLocation}>
+                  {address.city} {address.region ? `(${address.region})` : ""}
+                </Text>
+              )}
+            </View>
           </View>
-
-          <Text style={styles.headerSubtitle} numberOfLines={1}>
-            👤 {user.nickname} · 📍 {address.district}
-          </Text>
-
-          {Boolean(address.city) && (
-            <Text style={styles.headerLocation}>
-              {address.city} {address.region ? `(${address.region})` : ""}
-            </Text>
-          )}
         </TouchableOpacity>
 
         <View style={styles.headerActions}>
@@ -1003,7 +1045,7 @@ export default function Home() {
         district={address.district}
         city={address.city}
         onClose={() => setProfileModalVisible(false)}
-        onUpdateNickname={handleUpdateNickname}
+        onUpdateUser={handleUpdateUser}
         onLogout={handleLogout}
       />
     </SafeAreaView>
@@ -1099,6 +1141,37 @@ const styles = StyleSheet.create({
   headerUserSection: {
     flex: 1,
     marginRight: 10,
+  },
+  headerUserRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#1e293b",
+    borderWidth: 1.5,
+    borderColor: "#00f2fe",
+  },
+  headerAvatarFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#38bdf8",
+  },
+  headerAvatarText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  headerUserTextContainer: {
+    flex: 1,
   },
   brandRow: {
     flexDirection: "row",

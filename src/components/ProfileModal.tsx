@@ -1,3 +1,5 @@
+import * as ImagePicker from "expo-image-picker";
+import { Image } from "expo-image";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -10,18 +12,26 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import api from "../services/api";
+import { resolveMediaUrl } from "../services/config";
 import {
   triggerImpact,
   triggerNotificationSuccess,
 } from "../services/hapticsService";
 
+export interface ProfileUser {
+  id: string;
+  nickname: string;
+  avatarUrl?: string | null;
+}
+
 interface ProfileModalProps {
   visible: boolean;
-  user: { id: string; nickname: string } | null;
+  user: ProfileUser | null;
   district: string;
   city?: string;
   onClose: () => void;
-  onUpdateNickname: (newNickname: string) => Promise<void>;
+  onUpdateUser: (data: { nickname: string; avatarUrl?: string | null }) => Promise<void>;
   onLogout: () => void;
 }
 
@@ -31,17 +41,176 @@ export default function ProfileModal({
   district,
   city,
   onClose,
-  onUpdateNickname,
+  onUpdateUser,
   onLogout,
 }: ProfileModalProps) {
   const [editingNickname, setEditingNickname] = useState(user?.nickname || "");
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  // Sincroniza o apelido quando o modal abrir ou o usuário mudar
+  React.useEffect(() => {
+    if (user?.nickname) {
+      setEditingNickname(user.nickname);
+    }
+  }, [user?.nickname, visible]);
 
   if (!user) return null;
 
   const initialLetter = (user.nickname || "A").charAt(0).toUpperCase();
+  const currentAvatarUrl = resolveMediaUrl(user.avatarUrl);
 
-  async function handleSave() {
+  // Ações de Foto de Perfil (Câmera, Galeria ou Remover)
+  function handleAvatarPress() {
+    triggerImpact("light");
+
+    const options: { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }[] = [
+      {
+        text: "📸 Tirar Foto",
+        onPress: handleCameraPhoto,
+      },
+      {
+        text: "🖼️ Escolher da Galeria",
+        onPress: handleGalleryPhoto,
+      },
+    ];
+
+    if (user?.avatarUrl) {
+      options.push({
+        text: "🗑️ Remover Foto",
+        style: "destructive",
+        onPress: handleRemovePhoto,
+      });
+    }
+
+    options.push({
+      text: "Cancelar",
+      style: "cancel",
+    });
+
+    Alert.alert("Foto de Perfil", "Escolha como deseja atualizar sua foto:", options);
+  }
+
+  // Tirar foto com a câmera
+  async function handleCameraPhoto() {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permissão necessária",
+          "O AroundMe precisa de permissão da câmera para tirar sua foto de perfil."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadAvatar(result.assets[0].uri);
+      }
+    } catch (err) {
+      console.log("Erro ao abrir câmera:", err);
+      Alert.alert("Erro", "Não foi possível abrir a câmera.");
+    }
+  }
+
+  // Escolher da galeria
+  async function handleGalleryPhoto() {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permissão necessária",
+          "O AroundMe precisa de permissão da galeria para selecionar sua foto de perfil."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await uploadAvatar(result.assets[0].uri);
+      }
+    } catch (err) {
+      console.log("Erro ao abrir galeria:", err);
+      Alert.alert("Erro", "Não foi possível abrir a galeria.");
+    }
+  }
+
+  // Envia a foto para a API
+  async function uploadAvatar(uri: string) {
+    if (!user) return;
+    setUploadingAvatar(true);
+    triggerImpact("medium");
+
+    try {
+      const formData = new FormData();
+      const filename = `avatar_${user.id}_${Date.now()}.jpg`;
+
+      // @ts-ignore
+      formData.append("avatar", {
+        uri,
+        name: filename,
+        type: "image/jpeg",
+      });
+
+      const response = await api.post(`/users/${user.id}/avatar`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const newAvatarUrl = response.data.avatarUrl;
+      await onUpdateUser({
+        nickname: editingNickname.trim() || user.nickname,
+        avatarUrl: newAvatarUrl,
+      });
+
+      triggerNotificationSuccess();
+      Alert.alert("Sucesso", "Foto de perfil atualizada!");
+    } catch (error: any) {
+      console.log("Erro ao atualizar foto de perfil:", error?.response?.data || error?.message || error);
+      Alert.alert(
+        "Erro ao enviar foto",
+        error?.response?.data?.error || "Não foi possível atualizar sua foto de perfil agora."
+      );
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  // Remover foto de perfil
+  async function handleRemovePhoto() {
+    if (!user) return;
+    setUploadingAvatar(true);
+    triggerImpact("light");
+
+    try {
+      await api.delete(`/users/${user.id}/avatar`);
+      await onUpdateUser({
+        nickname: editingNickname.trim() || user.nickname,
+        avatarUrl: null,
+      });
+      triggerNotificationSuccess();
+      Alert.alert("Sucesso", "Foto de perfil removida.");
+    } catch (error: any) {
+      console.log("Erro ao remover foto de perfil:", error?.response?.data || error);
+      Alert.alert("Erro", "Não foi possível remover a foto de perfil.");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  // Salvar novo apelido
+  async function handleSaveNickname() {
     if (!editingNickname.trim()) {
       Alert.alert("Atenção", "O apelido não pode ficar vazio.");
       return;
@@ -54,7 +223,10 @@ export default function ProfileModal({
 
     setSaving(true);
     try {
-      await onUpdateNickname(editingNickname.trim());
+      await onUpdateUser({
+        nickname: editingNickname.trim(),
+        avatarUrl: user?.avatarUrl ?? null,
+      });
       triggerNotificationSuccess();
       Alert.alert("Sucesso", "Apelido atualizado!");
       onClose();
@@ -86,11 +258,50 @@ export default function ProfileModal({
                 </TouchableOpacity>
               </View>
 
-              {/* Avatar com Inicial */}
+              {/* Avatar com Foto ou Inicial + Botão de Editar */}
               <View style={styles.avatarContainer}>
-                <View style={styles.avatarCircle}>
-                  <Text style={styles.avatarText}>{initialLetter}</Text>
-                </View>
+                <TouchableOpacity
+                  style={styles.avatarWrapper}
+                  onPress={handleAvatarPress}
+                  activeOpacity={0.8}
+                  disabled={uploadingAvatar}
+                >
+                  {Boolean(currentAvatarUrl) ? (
+                    <Image
+                      source={{ uri: currentAvatarUrl! }}
+                      style={styles.avatarImage}
+                      contentFit="cover"
+                      transition={200}
+                    />
+                  ) : (
+                    <View style={styles.avatarCircle}>
+                      <Text style={styles.avatarText}>{initialLetter}</Text>
+                    </View>
+                  )}
+
+                  {/* Badge de Câmera / Edição */}
+                  <View style={styles.cameraBadge}>
+                    <Text style={styles.cameraBadgeIcon}>📷</Text>
+                  </View>
+
+                  {/* Overlay de Carregamento */}
+                  {uploadingAvatar && (
+                    <View style={styles.uploadingOverlay}>
+                      <ActivityIndicator size="small" color="#00f2fe" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleAvatarPress}
+                  disabled={uploadingAvatar}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.changePhotoText}>
+                    {user?.avatarUrl ? "Editar foto de perfil" : "Adicionar foto de perfil"}
+                  </Text>
+                </TouchableOpacity>
+
                 <Text style={styles.userNicknameText}>{user.nickname}</Text>
                 <Text style={styles.userIdText}>ID: {user.id.slice(0, 13)}...</Text>
               </View>
@@ -132,7 +343,7 @@ export default function ProfileModal({
 
                 <TouchableOpacity
                   style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-                  onPress={handleSave}
+                  onPress={handleSaveNickname}
                   disabled={saving}
                 >
                   {saving ? (
@@ -201,12 +412,26 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     alignItems: "center",
-    marginBottom: 18,
+    marginBottom: 16,
+  },
+  avatarWrapper: {
+    position: "relative",
+    width: 88,
+    height: 88,
+    marginBottom: 8,
+  },
+  avatarImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: "#1e293b",
+    borderWidth: 2.5,
+    borderColor: "#00f2fe",
   },
   avatarCircle: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: "#2563eb",
     alignItems: "center",
     justifyContent: "center",
@@ -215,12 +440,47 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 5,
-    marginBottom: 8,
+    borderWidth: 2.5,
+    borderColor: "#38bdf8",
   },
   avatarText: {
     color: "#ffffff",
-    fontSize: 30,
+    fontSize: 36,
     fontWeight: "800",
+  },
+  cameraBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#1d4ed8",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2.5,
+    borderColor: "#161b22",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  cameraBadgeIcon: {
+    fontSize: 14,
+  },
+  uploadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  changePhotoText: {
+    color: "#38bdf8",
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
   },
   userNicknameText: {
     color: "#f0f6fc",
@@ -236,7 +496,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#0d1117",
     borderRadius: 14,
     padding: 12,
-    marginBottom: 18,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#21262d",
   },

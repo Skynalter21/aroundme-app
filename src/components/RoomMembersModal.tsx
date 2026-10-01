@@ -10,7 +10,9 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { Image } from "expo-image";
 import api from "../services/api";
+import { resolveMediaUrl } from "../services/config";
 import { triggerImpact } from "../services/hapticsService";
 import { RoomData, RoomMemberData } from "../types/room";
 
@@ -182,11 +184,19 @@ export default function RoomMembersModal({
 
                     return (
                       <View style={styles.memberCard}>
-                        <View style={styles.avatarCircle}>
-                          <Text style={styles.avatarInitial}>
-                            {(item.nickname || "A").charAt(0).toUpperCase()}
-                          </Text>
-                        </View>
+                        {item.avatarUrl ? (
+                          <Image
+                            source={{ uri: resolveMediaUrl(item.avatarUrl)! }}
+                            style={styles.avatarImage}
+                            contentFit="cover"
+                          />
+                        ) : (
+                          <View style={styles.avatarCircle}>
+                            <Text style={styles.avatarInitial}>
+                              {(item.nickname || "A").charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
 
                         <View style={styles.memberInfo}>
                           <View style={styles.nameRow}>
@@ -323,6 +333,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#21262d",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 12,
+  },
+  avatarImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#1e293b",
     marginRight: 12,
   },
   avatarInitial: {

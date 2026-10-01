@@ -15,6 +15,7 @@ export interface MessageData {
   id: string;
   userId?: string;
   nickname: string;
+  avatarUrl?: string | null;
   district?: string | null;
   type?: "text" | "image" | "video";
   text?: string | null;
@@ -62,6 +63,10 @@ export default function MessageCard({
     return resolveMediaUrl(message.mediaUrl);
   }, [message.mediaUrl]);
 
+  const resolvedAvatarUrl = useMemo(() => {
+    return resolveMediaUrl(message.avatarUrl);
+  }, [message.avatarUrl]);
+
   function formatMessageDate(dateString: string) {
     if (!dateString) return "";
     const date = new Date(dateString);
@@ -94,6 +99,19 @@ export default function MessageCard({
     >
       {!isMine && (
         <View style={styles.senderRow}>
+          {Boolean(resolvedAvatarUrl) ? (
+            <Image
+              source={{ uri: resolvedAvatarUrl! }}
+              style={styles.senderAvatar}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={styles.senderAvatarFallback}>
+              <Text style={styles.senderAvatarText}>
+                {(message.nickname || "A").charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
           <Text style={styles.sender}>{message.nickname}</Text>
           {message.district ? (
             <Text style={styles.districtBadge}>· 📍 {message.district}</Text>
@@ -168,7 +186,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 4,
     marginLeft: 6,
-    gap: 4,
+    gap: 6,
+  },
+  senderAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#1e293b",
+  },
+  senderAvatarFallback: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#3b82f6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  senderAvatarText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "bold",
   },
   sender: {
     color: "#93c5fd",

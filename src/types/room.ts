@@ -15,6 +15,7 @@ export interface RoomData {
 export interface RoomMemberData {
   id: string;
   nickname: string;
+  avatarUrl?: string | null;
   role: "owner" | "moderator" | "member";
   joinedAt: string;
 }
@@ -24,6 +25,7 @@ export interface RoomMessageData {
   roomId: string;
   userId: string;
   nickname: string;
+  avatarUrl?: string | null;
   district?: string | null;
   type?: "text" | "image" | "video";
   text?: string | null;

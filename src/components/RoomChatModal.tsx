@@ -392,6 +392,7 @@ export default function RoomChatModal({
                   id: item.id,
                   userId: item.userId,
                   nickname: item.nickname,
+                  avatarUrl: item.avatarUrl,
                   district: item.district,
                   type: item.type,
                   text: item.text,
