@@ -29,6 +29,7 @@
         "android.permission.RECEIVE_BOOT_COMPLETED"
       ],
       "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.aroundme.app"
     },
     "web": {

@@ -363,56 +363,57 @@ export default function RoomChatModal({
           </TouchableOpacity>
         </View>
 
-        {/* Chat / Lista de Mensagens */}
-        {loading ? (
-          <View style={styles.loadingCenter}>
-            <ActivityIndicator size="large" color="#38bdf8" />
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.messagesList}
-            onContentSizeChange={() => {
-              flatListRef.current?.scrollToEnd({ animated: true });
-            }}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyIcon}>💬</Text>
-                <Text style={styles.emptyTitle}>Sala recém-iniciada!</Text>
-                <Text style={styles.emptySubtitle}>
-                  Seja a primeira pessoa a enviar uma mensagem aqui.
-                </Text>
-              </View>
-            }
-            renderItem={({ item }) => (
-              <MessageCard
-                message={{
-                  id: item.id,
-                  userId: item.userId,
-                  nickname: item.nickname,
-                  avatarUrl: item.avatarUrl,
-                  district: item.district,
-                  type: item.type,
-                  text: item.text,
-                  mediaUrl: item.mediaUrl,
-                  createdAt: item.createdAt,
-                }}
-                currentUserId={user?.id || ""}
-                onDelete={handleDeleteMessage}
-                onPressImage={(url, sender) => {
-                  setLightbox({ visible: true, url, sender });
-                }}
-              />
-            )}
-          />
-        )}
-
-        {/* Caixa de Entrada */}
+        {/* Chat / Lista de Mensagens e Caixa de Entrada */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.chatArea}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
+          {loading ? (
+            <View style={styles.loadingCenter}>
+              <ActivityIndicator size="large" color="#38bdf8" />
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.messagesList}
+              onContentSizeChange={() => {
+                flatListRef.current?.scrollToEnd({ animated: true });
+              }}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyIcon}>💬</Text>
+                  <Text style={styles.emptyTitle}>Sala recém-iniciada!</Text>
+                  <Text style={styles.emptySubtitle}>
+                    Seja a primeira pessoa a enviar uma mensagem aqui.
+                  </Text>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <MessageCard
+                  message={{
+                    id: item.id,
+                    userId: item.userId,
+                    nickname: item.nickname,
+                    avatarUrl: item.avatarUrl,
+                    district: item.district,
+                    type: item.type,
+                    text: item.text,
+                    mediaUrl: item.mediaUrl,
+                    createdAt: item.createdAt,
+                  }}
+                  currentUserId={user?.id || ""}
+                  onDelete={handleDeleteMessage}
+                  onPressImage={(url, sender) => {
+                    setLightbox({ visible: true, url, sender });
+                  }}
+                />
+              )}
+            />
+          )}
+
+          {/* Caixa de Entrada */}
           <View style={styles.footerInputContainer}>
             <SendMessageBox
               value={messageText}
@@ -460,6 +461,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0d1117",
+  },
+  chatArea: {
+    flex: 1,
   },
   header: {
     flexDirection: "row",

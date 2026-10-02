@@ -4,7 +4,10 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -244,22 +247,31 @@ export default function ProfileModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={styles.modal}>
-              <View style={styles.headerRow}>
-                <Text style={styles.title}>Perfil do Usuário</Text>
-                <TouchableOpacity
-                  onPress={onClose}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Text style={styles.closeIcon}>✕</Text>
-                </TouchableOpacity>
-              </View>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.overlay}>
+            <TouchableWithoutFeedback>
+              <View style={styles.modal}>
+                <View style={styles.headerRow}>
+                  <Text style={styles.title}>Perfil do Usuário</Text>
+                  <TouchableOpacity
+                    onPress={onClose}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={styles.closeIcon}>✕</Text>
+                  </TouchableOpacity>
+                </View>
 
-              {/* Avatar com Foto ou Inicial + Botão de Editar */}
-              <View style={styles.avatarContainer}>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.scrollContent}
+                >
+                  {/* Avatar com Foto ou Inicial + Botão de Editar */}
+                  <View style={styles.avatarContainer}>
                 <TouchableOpacity
                   style={styles.avatarWrapper}
                   onPress={handleAvatarPress}
@@ -364,15 +376,20 @@ export default function ProfileModal({
               >
                 <Text style={styles.logoutText}>🚪 Sair ou Trocar de Conta</Text>
               </TouchableOpacity>
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+            </ScrollView>
+          </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoid: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -386,6 +403,7 @@ const styles = StyleSheet.create({
     padding: 22,
     width: "100%",
     maxWidth: 380,
+    maxHeight: "85%",
     borderWidth: 1,
     borderColor: "#30363d",
     shadowColor: "#000",
@@ -393,6 +411,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 16,
     elevation: 8,
+  },
+  scrollContent: {
+    paddingBottom: 6,
   },
   headerRow: {
     flexDirection: "row",

@@ -92,13 +92,13 @@ export default function CreateRoomModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === "ios" ? "padding" : undefined}
-              style={styles.keyboardContainer}
-            >
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.overlay}>
+            <TouchableWithoutFeedback>
               <View style={styles.modal}>
                 <View style={styles.headerRow}>
                   <Text style={styles.title}>Criar Sala de Bate-Papo</Text>
@@ -112,6 +112,7 @@ export default function CreateRoomModal({
 
                 <ScrollView
                   showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
                   contentContainerStyle={styles.scrollContent}
                 >
                   {/* Nome da Sala */}
@@ -240,15 +241,18 @@ export default function CreateRoomModal({
                   </TouchableOpacity>
                 </ScrollView>
               </View>
-            </KeyboardAvoidingView>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoid: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -256,15 +260,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
   },
-  keyboardContainer: {
-    width: "100%",
-    maxWidth: 420,
-  },
   modal: {
     backgroundColor: "#161b22",
     borderRadius: 24,
     padding: 20,
-    maxHeight: "90%",
+    width: "100%",
+    maxWidth: 420,
+    maxHeight: "85%",
     borderWidth: 1,
     borderColor: "#30363d",
     shadowColor: "#000",

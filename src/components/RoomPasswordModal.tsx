@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -61,72 +64,86 @@ export default function RoomPasswordModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={styles.modal}>
-              <View style={styles.iconCircle}>
-                <Text style={styles.lockIcon}>🔒</Text>
-              </View>
-
-              <Text style={styles.title}>Sala Protegida</Text>
-              <Text style={styles.roomName}>{room.name}</Text>
-              <Text style={styles.subtitle}>
-                Esta sala requer uma senha definida pelo criador para liberar seu
-                acesso.
-              </Text>
-
-              <TextInput
-                style={[styles.input, Boolean(errorMessage) && styles.inputError]}
-                placeholder="Digite a senha da sala"
-                placeholderTextColor="#6b7280"
-                value={password}
-                onChangeText={(val) => {
-                  setPassword(val);
-                  if (errorMessage) setErrorMessage(null);
-                }}
-                secureTextEntry
-                autoFocus
-              />
-
-              {Boolean(errorMessage) && (
-                <Text style={styles.errorText}>{errorMessage}</Text>
-              )}
-
-              <View style={styles.actionsRow}>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => {
-                    setPassword("");
-                    setErrorMessage(null);
-                    onClose();
-                  }}
-                  disabled={loading}
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.overlay}>
+            <TouchableWithoutFeedback>
+              <View style={styles.modal}>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.scrollContent}
                 >
-                  <Text style={styles.cancelText}>Cancelar</Text>
-                </TouchableOpacity>
+                  <View style={styles.iconCircle}>
+                    <Text style={styles.lockIcon}>🔒</Text>
+                  </View>
 
-                <TouchableOpacity
-                  style={[styles.confirmButton, loading && styles.disabledButton]}
-                  onPress={handleConfirm}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.confirmText}>Entrar</Text>
+                  <Text style={styles.title}>Sala Protegida</Text>
+                  <Text style={styles.roomName}>{room.name}</Text>
+                  <Text style={styles.subtitle}>
+                    Esta sala requer uma senha definida pelo criador para liberar seu
+                    acesso.
+                  </Text>
+
+                  <TextInput
+                    style={[styles.input, Boolean(errorMessage) && styles.inputError]}
+                    placeholder="Digite a senha da sala"
+                    placeholderTextColor="#6b7280"
+                    value={password}
+                    onChangeText={(val) => {
+                      setPassword(val);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    secureTextEntry
+                    autoFocus
+                  />
+
+                  {Boolean(errorMessage) && (
+                    <Text style={styles.errorText}>{errorMessage}</Text>
                   )}
-                </TouchableOpacity>
+
+                  <View style={styles.actionsRow}>
+                    <TouchableOpacity
+                      style={styles.cancelButton}
+                      onPress={() => {
+                        setPassword("");
+                        setErrorMessage(null);
+                        onClose();
+                      }}
+                      disabled={loading}
+                    >
+                      <Text style={styles.cancelText}>Cancelar</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.confirmButton, loading && styles.disabledButton]}
+                      onPress={handleConfirm}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.confirmText}>Entrar</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
               </View>
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoid: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
@@ -140,7 +157,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: "100%",
     maxWidth: 380,
-    alignItems: "center",
+    maxHeight: "85%",
     borderWidth: 1,
     borderColor: "#30363d",
     shadowColor: "#000",
@@ -148,6 +165,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 8,
+  },
+  scrollContent: {
+    alignItems: "center",
   },
   iconCircle: {
     width: 60,

@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -683,36 +684,48 @@ export default function Home() {
   // Tela de Login / Apelido
   if (!user) {
     return (
-      <View style={styles.loginContainer}>
-        <View style={styles.loginCard}>
-          <View style={styles.loginLogoCircle}>
-            <Text style={styles.loginLogoIcon}>📡</Text>
-          </View>
-
-          <Text style={styles.loginTitle}>AroundMe</Text>
-          <Text style={styles.loginSubtitle}>
-            Conecte-se com pessoas e conversas em tempo real ao seu redor.
-          </Text>
-
-          <TextInput
-            placeholder="Digite seu apelido..."
-            placeholderTextColor="#6b7280"
-            value={nickname}
-            onChangeText={setNickname}
-            style={styles.loginInput}
-            maxLength={25}
-            autoFocus
-          />
-
-          <TouchableOpacity
-            style={styles.loginButton}
-            onPress={handleSaveUser}
-            activeOpacity={0.8}
+      <SafeAreaView style={styles.loginSafeArea} edges={["top", "bottom", "left", "right"]}>
+        <KeyboardAvoidingView
+          style={styles.loginKeyboardAvoid}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <ScrollView
+            contentContainerStyle={styles.loginScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
           >
-            <Text style={styles.loginButtonText}>Entrar no Chat</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            <View style={styles.loginCard}>
+              <View style={styles.loginLogoCircle}>
+                <Text style={styles.loginLogoIcon}>📡</Text>
+              </View>
+
+              <Text style={styles.loginTitle}>AroundMe</Text>
+              <Text style={styles.loginSubtitle}>
+                Conecte-se com pessoas e conversas em tempo real ao seu redor.
+              </Text>
+
+              <TextInput
+                placeholder="Digite seu apelido..."
+                placeholderTextColor="#6b7280"
+                value={nickname}
+                onChangeText={setNickname}
+                style={styles.loginInput}
+                maxLength={25}
+                autoFocus
+              />
+
+              <TouchableOpacity
+                style={styles.loginButton}
+                onPress={handleSaveUser}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.loginButtonText}>Entrar no Chat</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     );
   }
 
@@ -1057,9 +1070,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#0d1117",
   },
-  loginContainer: {
+  loginSafeArea: {
     flex: 1,
     backgroundColor: "#0d1117",
+  },
+  loginKeyboardAvoid: {
+    flex: 1,
+  },
+  loginScrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
     padding: 24,
   },
