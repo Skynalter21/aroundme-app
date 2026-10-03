@@ -8,7 +8,11 @@ export interface RoomData {
   membersCount: number;
   ownerId: string;
   district?: string | null;
+  latitude: number;
+  longitude: number;
+  radiusKm?: number;
   distance: number;
+  messageTtlMinutes?: number | null;
   createdAt: string;
 }
 

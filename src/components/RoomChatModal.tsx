@@ -1,5 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import * as Location from "expo-location";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,18 +16,20 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import api from "../services/api";
 import { triggerImpact, triggerNotificationSuccess } from "../services/hapticsService";
+import { calculateDistanceKm } from "../services/locationService";
 import socket from "../services/socket";
 import { RoomData, RoomMessageData } from "../types/room";
 import ImageModal from "./ImageModal";
 import MediaPickerModal from "./MediaPickerModal";
 import MessageCard, { MessageData } from "./MessageCard";
-import RoomMembersModal from "./RoomMembersModal";
+import RoomMembersModal, { getTtlLabel } from "./RoomMembersModal";
 import SendMessageBox, { SelectedMedia } from "./SendMessageBox";
 
 interface RoomChatModalProps {
   visible: boolean;
   room: RoomData | null;
   user: { id: string; nickname: string } | null;
+  userLocation?: { latitude: number; longitude: number } | null;
   initialRole?: "owner" | "moderator" | "member";
   onClose: () => void;
 }
@@ -35,6 +38,7 @@ export default function RoomChatModal({
   visible,
   room,
   user,
+  userLocation,
   initialRole = "member",
   onClose,
 }: RoomChatModalProps) {
@@ -46,6 +50,97 @@ export default function RoomChatModal({
   const [mediaPickerVisible, setMediaPickerVisible] = useState(false);
   const [membersModalVisible, setMembersModalVisible] = useState(false);
   const [myRole, setMyRole] = useState<"owner" | "moderator" | "member">(initialRole);
+  const [messageTtlMinutes, setMessageTtlMinutes] = useState<number>(room?.messageTtlMinutes || 0);
+
+  const [currentCoords, setCurrentCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(userLocation || null);
+
+  useEffect(() => {
+    if (userLocation) {
+      setCurrentCoords(userLocation);
+    }
+  }, [userLocation?.latitude, userLocation?.longitude]);
+
+  // Monitora localização em tempo real enquanto o modal estiver aberto
+  useEffect(() => {
+    if (!visible || !room) return;
+    let sub: Location.LocationSubscription | null = null;
+    let isMounted = true;
+
+    // 1. Inscrição contínua de posição
+    Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 2000,
+        distanceInterval: 1,
+      },
+      (loc) => {
+        if (isMounted && loc?.coords) {
+          setCurrentCoords({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        }
+      }
+    )
+      .then((s) => {
+        if (isMounted) sub = s;
+        else s.remove();
+      })
+      .catch((err) => {
+        console.log("watchPositionAsync indisponível:", err);
+      });
+
+    // 2. Polling periódico de alta confiabilidade para emuladores e segundo plano
+    const intervalId = setInterval(async () => {
+      try {
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (isMounted && lastKnown?.coords) {
+          setCurrentCoords({
+            latitude: lastKnown.coords.latitude,
+            longitude: lastKnown.coords.longitude,
+          });
+          return;
+        }
+
+        const fresh = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (isMounted && fresh?.coords) {
+          setCurrentCoords({
+            latitude: fresh.coords.latitude,
+            longitude: fresh.coords.longitude,
+          });
+        }
+      } catch (err) {
+        // silencioso
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      sub?.remove();
+      clearInterval(intervalId);
+    };
+  }, [visible, room?.id]);
+
+  const roomRadius = room?.radiusKm || 5;
+  const currentDistance = useMemo(() => {
+    if (!room) return 0;
+    if (currentCoords && room.latitude != null && room.longitude != null) {
+      return calculateDistanceKm(
+        currentCoords.latitude,
+        currentCoords.longitude,
+        room.latitude,
+        room.longitude
+      );
+    }
+    return room.distance ?? 0;
+  }, [currentCoords, room]);
+
+  const isOutsideRadius = currentDistance > roomRadius;
 
   const [lightbox, setLightbox] = useState<{
     visible: boolean;
@@ -62,6 +157,12 @@ export default function RoomChatModal({
   useEffect(() => {
     if (initialRole) setMyRole(initialRole);
   }, [initialRole]);
+
+  useEffect(() => {
+    if (room?.messageTtlMinutes !== undefined) {
+      setMessageTtlMinutes(room.messageTtlMinutes ?? 0);
+    }
+  }, [room?.id, room?.messageTtlMinutes]);
 
   // Carrega histórico e entra no canal da sala no Socket.IO
   useEffect(() => {
@@ -117,10 +218,26 @@ export default function RoomChatModal({
       }
     }
 
+    function onRoomSettingsUpdated(data: {
+      roomId: string;
+      messageTtlMinutes: number;
+    }) {
+      if (data.roomId === room?.id) {
+        setMessageTtlMinutes(data.messageTtlMinutes);
+        if (data.messageTtlMinutes > 0) {
+          const cutoff = Date.now() - data.messageTtlMinutes * 60 * 1000;
+          setMessages((prev) =>
+            prev.filter((m) => new Date(m.createdAt).getTime() >= cutoff)
+          );
+        }
+      }
+    }
+
     socket.on("new_room_message", onNewRoomMessage);
     socket.on("room_message_deleted", onRoomMessageDeleted);
     socket.on("room_member_kicked", onMemberKicked);
     socket.on("room_role_updated", onRoleUpdated);
+    socket.on("room_settings_updated", onRoomSettingsUpdated);
 
     return () => {
       socket.emit("leave_room_channel", room.id);
@@ -128,6 +245,7 @@ export default function RoomChatModal({
       socket.off("room_message_deleted", onRoomMessageDeleted);
       socket.off("room_member_kicked", onMemberKicked);
       socket.off("room_role_updated", onRoleUpdated);
+      socket.off("room_settings_updated", onRoomSettingsUpdated);
     };
   }, [visible, room?.id, user?.id]);
 
@@ -151,6 +269,14 @@ export default function RoomChatModal({
     if (!user || !room) return;
     if (!messageText.trim() && !selectedMedia) return;
 
+    if (isOutsideRadius) {
+      Alert.alert(
+        "Fora do raio de alcance",
+        `Não é possível mandar mensagens pois você está fora do raio de alcance desta sala (${currentDistance.toFixed(1)} km de distância, alcance máximo de ${roomRadius} km).`
+      );
+      return;
+    }
+
     setSending(true);
     try {
       if (selectedMedia) {
@@ -158,6 +284,10 @@ export default function RoomChatModal({
         formData.append("userId", user.id);
         formData.append("nickname", user.nickname);
         formData.append("type", selectedMedia.type);
+        if (currentCoords) {
+          formData.append("latitude", String(currentCoords.latitude));
+          formData.append("longitude", String(currentCoords.longitude));
+        }
         if (messageText.trim()) {
           formData.append("text", messageText.trim());
         }
@@ -189,6 +319,8 @@ export default function RoomChatModal({
           userId: user.id,
           nickname: user.nickname,
           text: messageText.trim(),
+          latitude: currentCoords?.latitude,
+          longitude: currentCoords?.longitude,
         });
         setMessageText("");
       }
@@ -344,11 +476,38 @@ export default function RoomChatModal({
             </Text>
             <View style={styles.headerSubRow}>
               <Text style={styles.headerCategory}>{room.category}</Text>
+              {isOutsideRadius ? (
+                <View style={styles.headerOutsideBadge}>
+                  <Text style={styles.headerOutsideBadgeText}>
+                    🚫 Fora do raio ({currentDistance.toFixed(1)} km)
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.headerRadiusBadge}>
+                  <Text style={styles.headerRadiusBadgeText}>
+                    📍 Raio {roomRadius} km
+                  </Text>
+                </View>
+              )}
               {myRole === "owner" ? (
                 <Text style={styles.myRoleOwner}>👑 Dono</Text>
               ) : myRole === "moderator" ? (
                 <Text style={styles.myRoleMod}>🛡️ Moderador</Text>
               ) : null}
+              {messageTtlMinutes > 0 && (
+                <TouchableOpacity
+                  style={styles.headerTtlBadge}
+                  onPress={() => {
+                    if (myRole === "owner") setMembersModalVisible(true);
+                  }}
+                  disabled={myRole !== "owner"}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.headerTtlText}>
+                    ⏱️ {getTtlLabel(messageTtlMinutes)}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -413,17 +572,35 @@ export default function RoomChatModal({
             />
           )}
 
-          {/* Caixa de Entrada */}
+          {/* Caixa de Entrada ou Banner de Bloqueio por Raio */}
           <View style={styles.footerInputContainer}>
-            <SendMessageBox
-              value={messageText}
-              onChangeText={setMessageText}
-              onSend={handleSendMessage}
-              onOpenMediaPicker={() => setMediaPickerVisible(true)}
-              selectedMedia={selectedMedia}
-              onRemoveMedia={() => setSelectedMedia(null)}
-              loading={sending}
-            />
+            {isOutsideRadius ? (
+              <View style={styles.outsideRadiusBanner}>
+                <View style={styles.outsideRadiusContent}>
+                  <View style={styles.outsideRadiusBadge}>
+                    <Text style={styles.outsideRadiusIcon}>🚫</Text>
+                  </View>
+                  <View style={styles.outsideRadiusTextWrap}>
+                    <Text style={styles.outsideRadiusTitle}>
+                      Fora do raio de alcance ({currentDistance.toFixed(1)} km)
+                    </Text>
+                    <Text style={styles.outsideRadiusDesc}>
+                      Não é possível mandar mensagem pois você está fora do raio de alcance desta sala (máx. {roomRadius} km em {room.district || "sua região"}).
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <SendMessageBox
+                value={messageText}
+                onChangeText={setMessageText}
+                onSend={handleSendMessage}
+                onOpenMediaPicker={() => setMediaPickerVisible(true)}
+                selectedMedia={selectedMedia}
+                onRemoveMedia={() => setSelectedMedia(null)}
+                loading={sending}
+              />
+            )}
           </View>
         </KeyboardAvoidingView>
 
@@ -433,6 +610,8 @@ export default function RoomChatModal({
           room={room}
           currentUserId={user?.id || ""}
           myRole={myRole}
+          messageTtlMinutes={messageTtlMinutes}
+          onUpdateTtl={setMessageTtlMinutes}
           onClose={() => setMembersModalVisible(false)}
         />
 
@@ -523,6 +702,19 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     borderRadius: 4,
   },
+  headerTtlBadge: {
+    backgroundColor: "#1e3a8a",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#3b82f6",
+  },
+  headerTtlText: {
+    color: "#93c5fd",
+    fontSize: 10,
+    fontWeight: "700",
+  },
   membersButton: {
     backgroundColor: "#21262d",
     paddingHorizontal: 10,
@@ -572,5 +764,68 @@ const styles = StyleSheet.create({
     backgroundColor: "#0d1117",
     borderTopWidth: 1,
     borderTopColor: "#21262d",
+  },
+  headerRadiusBadge: {
+    backgroundColor: "#0369a122",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#38bdf844",
+  },
+  headerRadiusBadgeText: {
+    color: "#38bdf8",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  headerOutsideBadge: {
+    backgroundColor: "#7f1d1d33",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#ef444455",
+  },
+  headerOutsideBadgeText: {
+    color: "#f87171",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  outsideRadiusBanner: {
+    backgroundColor: "#161b22",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#ef444455",
+  },
+  outsideRadiusContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  outsideRadiusBadge: {
+    backgroundColor: "#7f1d1d44",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  outsideRadiusIcon: {
+    fontSize: 18,
+  },
+  outsideRadiusTextWrap: {
+    flex: 1,
+  },
+  outsideRadiusTitle: {
+    color: "#f87171",
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  outsideRadiusDesc: {
+    color: "#c9d1d9",
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

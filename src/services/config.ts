@@ -9,6 +9,11 @@ import { Platform } from "react-native";
  * 4. No simulador iOS ou Web usa localhost:3333.
  */
 export function getBaseUrl(): string {
+  // Em modo de desenvolvimento, conecta no servidor local da API
+  if (__DEV__) {
+    return Platform.OS === "android" ? "http://10.0.2.2:3333" : "http://localhost:3333";
+  }
+
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }

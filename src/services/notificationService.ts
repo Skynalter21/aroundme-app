@@ -26,7 +26,6 @@ export async function setupNotificationChannels(): Promise<void> {
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#00f2fe",
-      sound: "default",
       showBadge: true,
       enableVibrate: true,
     });
@@ -97,7 +96,6 @@ export async function displayLocalMessageNotification(
       content: {
         title,
         body,
-        sound: "default",
         data: {
           messageId: message.id,
           userId: message.userId,

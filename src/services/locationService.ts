@@ -41,12 +41,27 @@ export async function getUserCurrentLocation(): Promise<LocationResult> {
 
   if (hasPermission) {
     try {
-      currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      // Tenta pegar a última posição conhecida primeiro (resposta instantânea no emulador e dispositivo)
+      const lastKnown = await Location.getLastKnownPositionAsync();
+      if (lastKnown) {
+        currentLocation = lastKnown;
+      } else {
+        currentLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+      }
     } catch (error) {
-      console.log("GPS indisponível, usando coordenadas padrão");
-      currentLocation = getDefaultLocation();
+      console.log("GPS indisponível ao obter posição, tentando getLastKnown:", error);
+      try {
+        const fallback = await Location.getLastKnownPositionAsync();
+        if (fallback) {
+          currentLocation = fallback;
+        } else {
+          currentLocation = getDefaultLocation();
+        }
+      } catch (e2) {
+        currentLocation = getDefaultLocation();
+      }
     }
   } else {
     console.log("Sem permissão ou rodando na Web, usando localização padrão");

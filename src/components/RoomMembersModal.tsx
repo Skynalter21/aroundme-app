@@ -15,12 +15,27 @@ import api from "../services/api";
 import { resolveMediaUrl } from "../services/config";
 import { triggerImpact } from "../services/hapticsService";
 import { RoomData, RoomMemberData } from "../types/room";
+import { EXPIRATION_OPTIONS } from "./CreateRoomModal";
+
+export function getTtlLabel(minutes?: number | null): string {
+  if (!minutes || minutes <= 0) return "Nunca (Permanente)";
+  if (minutes === 60) return "1 hora";
+  if (minutes === 360) return "6 horas";
+  if (minutes === 1440) return "24 horas";
+  if (minutes === 10080) return "7 dias";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} horas`;
+  return `${Math.round(hours / 24)} dias`;
+}
 
 interface RoomMembersModalProps {
   visible: boolean;
   room: RoomData | null;
   currentUserId: string;
   myRole: "owner" | "moderator" | "member";
+  messageTtlMinutes?: number;
+  onUpdateTtl?: (newTtl: number) => void;
   onClose: () => void;
   onMemberKicked?: (userId: string) => void;
 }
@@ -30,12 +45,47 @@ export default function RoomMembersModal({
   room,
   currentUserId,
   myRole,
+  messageTtlMinutes,
+  onUpdateTtl,
   onClose,
   onMemberKicked,
 }: RoomMembersModalProps) {
   const [members, setMembers] = useState<RoomMemberData[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [ttl, setTtl] = useState<number>(messageTtlMinutes ?? room?.messageTtlMinutes ?? 0);
+  const [updatingTtl, setUpdatingTtl] = useState(false);
+
+  useEffect(() => {
+    if (messageTtlMinutes !== undefined) {
+      setTtl(messageTtlMinutes);
+    } else if (room?.messageTtlMinutes !== undefined) {
+      setTtl(room.messageTtlMinutes ?? 0);
+    }
+  }, [messageTtlMinutes, room?.messageTtlMinutes]);
+
+  async function handleSelectTtl(minutes: number) {
+    if (!room || myRole !== "owner" || updatingTtl) return;
+    triggerImpact("medium");
+    setUpdatingTtl(true);
+    try {
+      await api.patch(`/rooms/${room.id}/settings`, {
+        ownerId: currentUserId,
+        messageTtlMinutes: minutes,
+      });
+      setTtl(minutes);
+      onUpdateTtl?.(minutes);
+      Alert.alert(
+        "Configuração salva!",
+        `Mensagens deste grupo agora somem após: ${getTtlLabel(minutes)}.`
+      );
+    } catch (err) {
+      console.log("Erro ao salvar tempo de mensagens:", err);
+      Alert.alert("Erro", "Não foi possível atualizar o tempo das mensagens.");
+    } finally {
+      setUpdatingTtl(false);
+    }
+  }
 
   useEffect(() => {
     if (visible && room) {
@@ -156,6 +206,55 @@ export default function RoomMembersModal({
                 >
                   <Text style={styles.closeIcon}>✕</Text>
                 </TouchableOpacity>
+              </View>
+
+              {/* Seção de Mensagens Temporárias */}
+              <View style={styles.settingsSection}>
+                <View style={styles.settingsHeader}>
+                  <Text style={styles.settingsTitle}>⏱️ Mensagens Temporárias</Text>
+                  <View style={styles.settingsCurrentBadge}>
+                    <Text style={styles.settingsCurrentBadgeText}>
+                      {getTtlLabel(ttl)}
+                    </Text>
+                  </View>
+                </View>
+
+                {myRole === "owner" ? (
+                  <>
+                    <Text style={styles.settingsSubtitle}>
+                      Como dono, toque para alterar quando as mensagens somem:
+                    </Text>
+                    <View style={styles.ttlChipsContainer}>
+                      {EXPIRATION_OPTIONS.map((opt) => {
+                        const active = ttl === opt.value;
+                        return (
+                          <TouchableOpacity
+                            key={opt.value}
+                            style={[styles.ttlChip, active && styles.ttlChipActive]}
+                            onPress={() => handleSelectTtl(opt.value)}
+                            disabled={updatingTtl}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={[
+                                styles.ttlChipText,
+                                active && styles.ttlChipTextActive,
+                              ]}
+                            >
+                              {opt.icon} {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.settingsSubtitle}>
+                    {ttl > 0
+                      ? `As mensagens deste grupo somem após ${getTtlLabel(ttl)}.`
+                      : "As mensagens deste grupo não expiram."}
+                  </Text>
+                )}
               </View>
 
               {loading ? (
@@ -415,6 +514,70 @@ const styles = StyleSheet.create({
   kickButtonText: {
     color: "#f87171",
     fontSize: 11,
+    fontWeight: "700",
+  },
+  settingsSection: {
+    backgroundColor: "#161b22",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#30363d",
+  },
+  settingsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  settingsTitle: {
+    color: "#f0f6fc",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  settingsCurrentBadge: {
+    backgroundColor: "#1e3a8a",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#3b82f6",
+  },
+  settingsCurrentBadgeText: {
+    color: "#93c5fd",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  settingsSubtitle: {
+    color: "#8b949e",
+    fontSize: 12,
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+  ttlChipsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  ttlChip: {
+    backgroundColor: "#0d1117",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#30363d",
+  },
+  ttlChipActive: {
+    backgroundColor: "#2563eb",
+    borderColor: "#60a5fa",
+  },
+  ttlChipText: {
+    color: "#8b949e",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  ttlChipTextActive: {
+    color: "#ffffff",
     fontWeight: "700",
   },
 });

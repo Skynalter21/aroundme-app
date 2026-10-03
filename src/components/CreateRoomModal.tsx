@@ -25,11 +25,27 @@ interface CreateRoomModalProps {
     category: string;
     password?: string;
     maxMembers: number;
+    messageTtlMinutes?: number;
+    radiusKm?: number;
   }) => Promise<void>;
 }
 
 const CATEGORIES = ["Geral", "Resenha", "Esportes", "Eventos", "Ajuda", "Games"];
 const MEMBER_LIMITS = [10, 25, 50, 100];
+export const EXPIRATION_OPTIONS = [
+  { label: "Nunca", value: 0, icon: "♾️" },
+  { label: "1 hora", value: 60, icon: "⏱️" },
+  { label: "6 horas", value: 360, icon: "⏱️" },
+  { label: "24 horas", value: 1440, icon: "⏱️" },
+  { label: "7 dias", value: 10080, icon: "⏱️" },
+];
+export const ROOM_RADIUS_OPTIONS = [
+  { label: "1 km", value: 1, desc: "Vizinhos" },
+  { label: "3 km", value: 3, desc: "Bairro" },
+  { label: "5 km", value: 5, desc: "Bairro (Padrão)" },
+  { label: "10 km", value: 10, desc: "Região" },
+  { label: "25 km", value: 25, desc: "Cidade" },
+];
 
 export default function CreateRoomModal({
   visible,
@@ -40,6 +56,8 @@ export default function CreateRoomModal({
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Geral");
   const [maxMembers, setMaxMembers] = useState(50);
+  const [messageTtlMinutes, setMessageTtlMinutes] = useState(0);
+  const [radiusKm, setRadiusKm] = useState(5);
   const [isProtected, setIsProtected] = useState(false);
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -49,6 +67,8 @@ export default function CreateRoomModal({
     setDescription("");
     setCategory("Geral");
     setMaxMembers(50);
+    setMessageTtlMinutes(0);
+    setRadiusKm(5);
     setIsProtected(false);
     setPassword("");
   }
@@ -72,6 +92,8 @@ export default function CreateRoomModal({
         category,
         password: isProtected ? password.trim() : undefined,
         maxMembers,
+        messageTtlMinutes,
+        radiusKm,
       });
 
       triggerImpact("medium");
@@ -193,6 +215,65 @@ export default function CreateRoomModal({
                     })}
                   </View>
 
+                  {/* Mensagens Temporárias (Auto-apagar) */}
+                  <Text style={styles.label}>⏱️ Mensagens Temporárias (Sumir após)</Text>
+                  <View style={styles.chipsRow}>
+                    {EXPIRATION_OPTIONS.map((opt) => {
+                      const active = messageTtlMinutes === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[styles.chip, active && styles.chipActive]}
+                          onPress={() => {
+                            triggerSelection();
+                            setMessageTtlMinutes(opt.value);
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              active && styles.chipTextActive,
+                            ]}
+                          >
+                            {opt.icon} {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Raio Fixo da Sala */}
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.label}>📍 Raio de Alcance Fixo da Sala</Text>
+                    <Text style={styles.helperText}>
+                      Fixa no bairro atual. Usuários e dono só podem acessar e conversar dentro deste raio.
+                    </Text>
+                  </View>
+                  <View style={styles.chipsRow}>
+                    {ROOM_RADIUS_OPTIONS.map((opt) => {
+                      const active = radiusKm === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[styles.chip, active && styles.chipActive]}
+                          onPress={() => {
+                            triggerSelection();
+                            setRadiusKm(opt.value);
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              active && styles.chipTextActive,
+                            ]}
+                          >
+                            📍 {opt.label} · {opt.desc}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
                   {/* Proteção com Senha */}
                   <View style={styles.switchRow}>
                     <View style={styles.switchLabelBlock}>
@@ -297,12 +378,20 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 10,
   },
+  sectionHeaderRow: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
   label: {
     color: "#c9d1d9",
     fontSize: 13,
     fontWeight: "600",
+    marginBottom: 2,
+  },
+  helperText: {
+    color: "#8b949e",
+    fontSize: 11,
     marginBottom: 6,
-    marginTop: 10,
   },
   input: {
     backgroundColor: "#0d1117",

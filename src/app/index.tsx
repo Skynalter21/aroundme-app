@@ -256,32 +256,35 @@ export default function Home() {
   }, [user, location, radius]);
 
   // Busca localização do usuário com reverse geocoding
-  async function fetchLocation() {
+  async function fetchLocation(): Promise<UserLocation | null> {
     try {
       setLoadingLocation(true);
       const data = await getUserCurrentLocation();
       setLocation(data.location);
       setAddress(data.address);
+      return data.location;
     } catch (error: any) {
       console.log("Erro de localização:", error);
       Alert.alert(
         "Localização necessária",
-        "Por favor, habilite a permissão de GPS para ver e enviar mensagens no raio.",
+        "Por favor, habilite a permissão de GPS para ver e enviar mensagens no raio."
       );
+      return null;
     } finally {
       setLoadingLocation(false);
     }
   }
 
   // Busca mensagens no raio
-  async function loadMessages() {
-    if (!location) return;
+  async function loadMessages(currentLoc?: UserLocation | null) {
+    const loc = currentLoc || location;
+    if (!loc) return;
 
     try {
       const response = await api.get("/messages", {
         params: {
-          latitude: location.latitude,
-          longitude: location.longitude,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
           radius,
         },
       });
@@ -293,15 +296,16 @@ export default function Home() {
   }
 
   // Busca salas no raio
-  async function loadRooms() {
-    if (!location) return;
+  async function loadRooms(currentLoc?: UserLocation | null) {
+    const loc = currentLoc || location;
+    if (!loc) return;
 
     try {
       setLoadingRooms(true);
       const response = await api.get("/rooms", {
         params: {
-          latitude: location.latitude,
-          longitude: location.longitude,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
           radius,
         },
       });
@@ -314,18 +318,46 @@ export default function Home() {
     }
   }
 
+  // Carrega salas ao mudar para a aba de salas
+  useEffect(() => {
+    if (activeTab === "rooms" && location) {
+      loadRooms(location);
+    }
+  }, [activeTab]);
+
   // Pull to refresh
   const onRefresh = useCallback(async () => {
     triggerSelection();
     setRefreshing(true);
-    await Promise.all([fetchLocation(), loadMessages(), loadRooms()]);
+    const loc = await fetchLocation();
+    await Promise.all([loadMessages(loc), loadRooms(loc)]);
     setRefreshing(false);
-  }, [location, radius]);
+  }, [radius, location]);
 
   // Selecionar / Entrar em uma sala
   async function handleSelectRoom(room: RoomData) {
     if (!user) {
       Alert.alert("Atenção", "Crie seu apelido primeiro para entrar em salas.");
+      return;
+    }
+
+    // Validação de raio de alcance da sala (fixa na região de criação)
+    const roomRadius = room.radiusKm || 5;
+    let currentDist = room.distance;
+    if (location && room.latitude != null && room.longitude != null) {
+      currentDist = calculateDistanceKm(
+        location.latitude,
+        location.longitude,
+        room.latitude,
+        room.longitude
+      );
+    }
+
+    if (currentDist > roomRadius) {
+      Alert.alert(
+        "Fora da região da sala",
+        `Esta sala foi criada e fica fixa no bairro "${room.district || "da região"}" com raio de alcance de ${roomRadius} km.\n\nVocê está a ${currentDist.toFixed(1)} km e só poderá acessá-la quando estiver dentro da área de alcance.`
+      );
       return;
     }
 
@@ -341,6 +373,8 @@ export default function Home() {
       const res = await api.post(`/rooms/${room.id}/join`, {
         userId: user.id,
         nickname: user.nickname,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
       });
 
       setActiveRoomRole(
@@ -366,15 +400,24 @@ export default function Home() {
   async function handlePasswordSubmit(password: string) {
     if (!selectedRoomForPassword || !user) return;
 
-    const res = await api.post(`/rooms/${selectedRoomForPassword.id}/join`, {
-      userId: user.id,
-      nickname: user.nickname,
-      password,
-    });
+    try {
+      const res = await api.post(`/rooms/${selectedRoomForPassword.id}/join`, {
+        userId: user.id,
+        nickname: user.nickname,
+        password,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      });
 
-    const isOwner = selectedRoomForPassword.ownerId === user.id;
-    setActiveRoomRole(res.data.role || (isOwner ? "owner" : "member"));
-    setActiveRoom(selectedRoomForPassword);
+      const isOwner = selectedRoomForPassword.ownerId === user.id;
+      setActiveRoomRole(res.data.role || (isOwner ? "owner" : "member"));
+      setActiveRoom(selectedRoomForPassword);
+    } catch (err: any) {
+      Alert.alert(
+        "Erro ao entrar",
+        err?.response?.data?.error || "Senha incorreta ou erro ao entrar na sala."
+      );
+    }
   }
 
   // Criar nova sala
@@ -384,6 +427,8 @@ export default function Home() {
     category: string;
     password?: string;
     maxMembers: number;
+    messageTtlMinutes?: number;
+    radiusKm?: number;
   }) {
     if (!user) return;
 
@@ -395,6 +440,7 @@ export default function Home() {
 
     const res = await api.post("/rooms", {
       ...data,
+      radiusKm: data.radiusKm || 5,
       ownerId: user.id,
       nickname: user.nickname,
       latitude: coords.latitude,
@@ -856,7 +902,7 @@ export default function Home() {
       {activeTab === "feed" && (
         <KeyboardAvoidingView
           style={styles.chatArea}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
         >
           <FlatList
@@ -1016,6 +1062,7 @@ export default function Home() {
         visible={Boolean(activeRoom)}
         room={activeRoom}
         user={user}
+        userLocation={location}
         initialRole={activeRoomRole}
         onClose={() => {
           setActiveRoom(null);

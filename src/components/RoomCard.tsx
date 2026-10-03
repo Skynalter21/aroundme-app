@@ -25,11 +25,13 @@ export default function RoomCard({
 }: RoomCardProps) {
   const isOwner = room.ownerId === currentUserId;
   const icon = CATEGORY_ICONS[room.category] || "💬";
+  const roomRadius = room.radiusKm || 5;
+  const isOutside = room.distance > roomRadius;
 
   return (
     <TouchableOpacity
       activeOpacity={0.8}
-      style={styles.card}
+      style={[styles.card, isOutside && styles.cardOutside]}
       onPress={() => {
         triggerImpact("light");
         onPress(room);
@@ -45,7 +47,10 @@ export default function RoomCard({
               </Text>
               {isOwner && <Text style={styles.ownerBadge}>👑 Dono</Text>}
             </View>
-            <Text style={styles.categoryBadge}>{room.category}</Text>
+            <View style={styles.subMetaRow}>
+              <Text style={styles.categoryBadge}>{room.category}</Text>
+              <Text style={styles.radiusScopeBadge}>📍 Raio {roomRadius} km</Text>
+            </View>
           </View>
         </View>
 
@@ -65,8 +70,8 @@ export default function RoomCard({
 
       <View style={styles.footerRow}>
         <View style={styles.locationBlock}>
-          <Text style={styles.locationText} numberOfLines={1}>
-            📍 {room.district || "Próximo"} ·{" "}
+          <Text style={[styles.locationText, isOutside && styles.locationTextOutside]} numberOfLines={1}>
+            {isOutside ? "🚫 Fora de alcance" : "📍"} {room.district || "Próximo"} ·{" "}
             {room.distance === 0
               ? "Aqui com você"
               : `${room.distance.toFixed(1)} km`}
@@ -81,13 +86,15 @@ export default function RoomCard({
           </View>
 
           <TouchableOpacity
-            style={styles.enterButton}
+            style={[styles.enterButton, isOutside && styles.enterButtonOutside]}
             onPress={() => {
               triggerImpact("medium");
               onPress(room);
             }}
           >
-            <Text style={styles.enterButtonText}>Entrar</Text>
+            <Text style={[styles.enterButtonText, isOutside && styles.enterButtonTextOutside]}>
+              {isOutside ? "🔒 Fora do raio" : "Entrar"}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -154,7 +161,21 @@ const styles = StyleSheet.create({
     color: "#8b949e",
     fontSize: 12,
     fontWeight: "500",
+  },
+  subMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginTop: 2,
+  },
+  radiusScopeBadge: {
+    color: "#38bdf8",
+    fontSize: 11,
+    fontWeight: "600",
+    backgroundColor: "#0369a122",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
   },
   lockBadge: {
     flexDirection: "row",
@@ -216,15 +237,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
+  cardOutside: {
+    borderColor: "#30363d88",
+    opacity: 0.85,
+  },
+  locationTextOutside: {
+    color: "#f87171",
+    fontWeight: "600",
+  },
   enterButton: {
     backgroundColor: "#2563eb",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
   },
+  enterButtonOutside: {
+    backgroundColor: "#21262d",
+    borderWidth: 1,
+    borderColor: "#374151",
+  },
   enterButtonText: {
     color: "#ffffff",
     fontSize: 12,
     fontWeight: "700",
+  },
+  enterButtonTextOutside: {
+    color: "#9ca3af",
   },
 });
